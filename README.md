@@ -1,8 +1,5 @@
 # Centralized Auth Server (Центральный Сервер Авторизации)
 
-<img width="1198" height="464" alt="image" src="https://github.com/user-attachments/assets/45a0805b-ab62-4805-ac8b-8e2a920cf4fb" />
-
-
 Данный проект представляет собой легковесный и безопасный сервер централизованной авторизации пользователей для веб-панелей управления (например, `openvpn-web`, `samba-web` и др.). Он работает на базе Flask и SQLite, предоставляя интерфейс администратора для управления пользователями и защищенный API-токен для верификации запросов от доверенных нод.
 
 ---
@@ -42,8 +39,12 @@
 
 ## Быстрый старт и развертывание
 
-### 1. Подготовка папки
-Убедитесь, что все файлы проекта находятся в каталоге `/opt/centralized-auth`. Назначьте владельца `root:root` для файлов:
+### 1. Клонирование и подготовка папки
+Склонируйте репозиторий в папку `/opt/centralized-auth`:
+```bash
+sudo git clone https://github.com/Ttolyanich/centralized-auth.git /opt/centralized-auth
+```
+Назначьте владельца `root:root` для файлов:
 ```bash
 sudo chown -R root:root /opt/centralized-auth
 ```
