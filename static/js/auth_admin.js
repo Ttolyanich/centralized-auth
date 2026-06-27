@@ -35,6 +35,7 @@ async function loadUsers() {
 // Отрисовка таблицы пользователей
 function renderUsers(users) {
     const tbody = document.getElementById('usersTableBody');
+    if (!tbody) return;
     tbody.innerHTML = '';
 
     if (users.length === 0) {
@@ -44,17 +45,56 @@ function renderUsers(users) {
 
     users.forEach(user => {
         const safeName = user.username.replace(/['"]/g, '');
-        const deleteButton = `<button onclick="deleteUser(${user.id}, '${safeName}')" class="btn-action-revoke">Удалить</button>`;
-
         const row = document.createElement('tr');
+        
+        // Нельзя удалить самого себя
+        const deleteButtonHtml = user.username === CURRENT_USERNAME
+            ? `<span style="color:#666; font-size:12px; padding: 6px 12px; display:inline-block;">Текущий</span>`
+            : `<button onclick="deleteUser(${user.id}, '${safeName}')" class="btn-action-revoke">Удалить</button>`;
+
+        // Колонка роли: если это сам пользователь — просто плашка. Если другой — выпадающий список.
+        let roleCellHtml;
+        if (user.username === CURRENT_USERNAME) {
+            roleCellHtml = `<span class="status-badge active">${user.role === 'admin' ? 'Администратор' : 'Сотрудник'}</span>`;
+        } else {
+            roleCellHtml = `
+                <select onchange="updateUserRole(${user.id}, this.value)" class="select-role-table">
+                    <option value="employee" ${user.role === 'employee' ? 'selected' : ''}>Сотрудник</option>
+                    <option value="admin" ${user.role === 'admin' ? 'selected' : ''}>Администратор</option>
+                </select>
+            `;
+        }
+
         row.innerHTML = `
             <td style="font-family:monospace; font-weight:600; padding:14px 24px;">${safeName}</td>
-            <td style="padding:14px 24px;"><span class="status-badge active">${user.role}</span></td>
+            <td style="padding:14px 24px;">${roleCellHtml}</td>
             <td style="padding:14px 24px; color: #888;">${user.created_at}</td>
-            <td class="text-right" style="padding:14px 24px;">${deleteButton}</td>
+            <td class="text-right" style="padding:14px 24px;">${deleteButtonHtml}</td>
         `;
         tbody.appendChild(row);
     });
+}
+
+// Изменение роли пользователя
+async function updateUserRole(userId, newRole) {
+    try {
+        const response = await fetch(`${BASE_PATH}/api/users/update-role/${userId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ role: newRole })
+        });
+        
+        if (!checkAuthResponse(response)) return;
+        const result = await response.json();
+        
+        if (!response.ok) {
+            alert(`Ошибка изменения роли: ${result.error}`);
+            loadUsers();
+        }
+    } catch (err) {
+        alert("Ошибка соединения с сервером");
+        loadUsers();
+    }
 }
 
 // Создание пользователя

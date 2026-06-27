@@ -12,6 +12,7 @@
             const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
             document.documentElement.setAttribute('data-theme', savedTheme);
         })();
+        const CURRENT_USERNAME = "{{ session.get('username') }}";
     </script>
 </head>
 <body>
@@ -26,7 +27,9 @@
                 <button id="themeToggleBtn" onclick="toggleTheme()" class="btn-theme-toggle" title="Переключить тему">
                     <svg id="themeIcon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></svg>
                 </button>
-                <span id="currentUserSpan" class="current-user-name">Загрузка...</span>
+                <span id="currentUserSpan" class="current-user-name">
+                    {{ session.get('username') }} ({% if session.get('role') == 'admin' %}Администратор{% else %}Сотрудник{% endif %})
+                </span>
                 <button onclick="handleLogout()" class="btn-logout">Выйти</button>
             </div>
         </div>

@@ -286,6 +286,43 @@ def api_change_password():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+# API Изменения роли пользователя
+@app.route('/api/users/update-role/<int:user_id>', methods=['POST'])
+@login_required
+def api_update_user_role(user_id):
+    if session.get("role") != "admin":
+        return jsonify({"error": "Forbidden: Only admins can update roles"}), 403
+        
+    data = request.json or {}
+    new_role = data.get('role', '').strip()
+    if new_role not in ['admin', 'employee']:
+        return jsonify({"error": "Неверная роль"}), 400
+        
+    current_username = session.get("username")
+    try:
+        conn = sqlite3.connect(USERS_DB)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        # Проверяем существование пользователя
+        cursor.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+        user = cursor.fetchone()
+        if not user:
+            conn.close()
+            return jsonify({"error": "Пользователь не найден"}), 404
+            
+        # Запрещаем менять роль самому себе
+        if user['username'] == current_username:
+            conn.close()
+            return jsonify({"error": "Вы не можете изменить роль самому себе"}), 400
+            
+        cursor.execute("UPDATE users SET role = ? WHERE id = ?", (new_role, user_id))
+        conn.commit()
+        conn.close()
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 if __name__ == '__main__':
     init_db()
     bind_host = config.get("bind_host", "0.0.0.0")
