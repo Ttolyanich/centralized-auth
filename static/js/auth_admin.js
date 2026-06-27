@@ -32,6 +32,82 @@ async function loadUsers() {
     }
 }
 
+// Глобальная переменная для роли нового пользователя
+let selectedNewUserRole = 'employee';
+
+// Создание кастомного выпадающего списка
+function createCustomDropdown(options, defaultValue, onChange) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'custom-select-wrapper';
+    
+    const trigger = document.createElement('div');
+    trigger.className = 'custom-select-trigger';
+    const selectedOption = options.find(opt => opt.value === defaultValue) || options[0];
+    trigger.innerText = selectedOption.label;
+    wrapper.appendChild(trigger);
+    
+    const optionsContainer = document.createElement('div');
+    optionsContainer.className = 'custom-select-options glass';
+    
+    options.forEach(opt => {
+        const optDiv = document.createElement('div');
+        optDiv.className = `custom-option ${opt.value === defaultValue ? 'selected' : ''}`;
+        optDiv.innerText = opt.label;
+        optDiv.onclick = (e) => {
+            e.stopPropagation();
+            trigger.innerText = opt.label;
+            optionsContainer.querySelectorAll('.custom-option').forEach(el => el.classList.remove('selected'));
+            optDiv.classList.add('selected');
+            optionsContainer.classList.remove('open');
+            wrapper.classList.remove('open');
+            onChange(opt.value);
+        };
+        optionsContainer.appendChild(optDiv);
+    });
+    
+    wrapper.appendChild(optionsContainer);
+    
+    trigger.onclick = (e) => {
+        e.stopPropagation();
+        // Закрываем все остальные открытые выпадающие списки
+        document.querySelectorAll('.custom-select-wrapper').forEach(el => {
+            if (el !== wrapper) {
+                el.classList.remove('open');
+                el.querySelector('.custom-select-options').classList.remove('open');
+            }
+        });
+        wrapper.classList.toggle('open');
+        optionsContainer.classList.toggle('open');
+    };
+    
+    return wrapper;
+}
+
+// Глобальный обработчик клика для закрытия всех списков при клике мимо
+document.addEventListener('click', () => {
+    document.querySelectorAll('.custom-select-wrapper').forEach(el => {
+        el.classList.remove('open');
+        const opts = el.querySelector('.custom-select-options');
+        if (opts) opts.classList.remove('open');
+    });
+});
+
+// Инициализация основного выбора роли
+function initMainRoleSelector() {
+    const container = document.getElementById('roleSelectWrapper');
+    if (!container) return;
+    container.innerHTML = '';
+    
+    const dropdown = createCustomDropdown([
+        { value: 'employee', label: 'Сотрудник' },
+        { value: 'admin', label: 'Администратор' }
+    ], 'employee', (value) => {
+        selectedNewUserRole = value;
+    });
+    
+    container.appendChild(dropdown);
+}
+
 // Отрисовка таблицы пользователей
 function renderUsers(users) {
     const tbody = document.getElementById('usersTableBody');
@@ -47,30 +123,49 @@ function renderUsers(users) {
         const safeName = user.username.replace(/['"]/g, '');
         const row = document.createElement('tr');
         
-        // Нельзя удалить самого себя
-        const deleteButtonHtml = user.username === CURRENT_USERNAME
-            ? `<span style="color:#666; font-size:12px; padding: 6px 12px; display:inline-block;">Текущий</span>`
-            : `<button onclick="deleteUser(${user.id}, '${safeName}')" class="btn-action-revoke">Удалить</button>`;
-
-        // Колонка роли: если это сам пользователь — просто плашка. Если другой — выпадающий список.
-        let roleCellHtml;
+        // Имя пользователя
+        const tdName = document.createElement('td');
+        tdName.style.fontFamily = 'monospace';
+        tdName.style.fontWeight = '600';
+        tdName.style.padding = '14px 24px';
+        tdName.innerText = safeName;
+        row.appendChild(tdName);
+        
+        // Роль (кастомный селект)
+        const tdRole = document.createElement('td');
+        tdRole.style.padding = '14px 24px';
         if (user.username === CURRENT_USERNAME) {
-            roleCellHtml = `<span class="status-badge active">${user.role === 'admin' ? 'Администратор' : 'Сотрудник'}</span>`;
+            tdRole.innerHTML = `<span class="status-badge active">${user.role === 'admin' ? 'Администратор' : 'Сотрудник'}</span>`;
         } else {
-            roleCellHtml = `
-                <select onchange="updateUserRole(${user.id}, this.value)" class="select-role-table">
-                    <option value="employee" ${user.role === 'employee' ? 'selected' : ''}>Сотрудник</option>
-                    <option value="admin" ${user.role === 'admin' ? 'selected' : ''}>Администратор</option>
-                </select>
-            `;
+            tdRole.className = 'table-cell-dropdown';
+            const dropdown = createCustomDropdown([
+                { value: 'employee', label: 'Сотрудник' },
+                { value: 'admin', label: 'Администратор' }
+            ], user.role, (value) => {
+                updateUserRole(user.id, value);
+            });
+            tdRole.appendChild(dropdown);
         }
-
-        row.innerHTML = `
-            <td style="font-family:monospace; font-weight:600; padding:14px 24px;">${safeName}</td>
-            <td style="padding:14px 24px;">${roleCellHtml}</td>
-            <td style="padding:14px 24px; color: #888;">${user.created_at}</td>
-            <td class="text-right" style="padding:14px 24px;">${deleteButtonHtml}</td>
-        `;
+        row.appendChild(tdRole);
+        
+        // Дата создания
+        const tdDate = document.createElement('td');
+        tdDate.style.padding = '14px 24px';
+        tdDate.style.color = '#888';
+        tdDate.innerText = user.created_at;
+        row.appendChild(tdDate);
+        
+        // Действия (Нельзя удалить самого себя)
+        const tdActions = document.createElement('td');
+        tdActions.className = 'text-right';
+        tdActions.style.padding = '14px 24px';
+        if (user.username === CURRENT_USERNAME) {
+            tdActions.innerHTML = `<span style="color:#666; font-size:12px; padding: 6px 12px; display:inline-block;">Текущий</span>`;
+        } else {
+            tdActions.innerHTML = `<button onclick="deleteUser(${user.id}, '${safeName}')" class="btn-action-revoke">Удалить</button>`;
+        }
+        row.appendChild(tdActions);
+        
         tbody.appendChild(row);
     });
 }
@@ -101,10 +196,9 @@ async function updateUserRole(userId, newRole) {
 async function createUser() {
     const userInp = document.getElementById('newUsername');
     const passInp = document.getElementById('newPassword');
-    const roleInp = document.getElementById('newRole');
     const username = userInp.value.trim();
     const password = passInp.value.trim();
-    const role = roleInp ? roleInp.value : 'employee';
+    const role = selectedNewUserRole;
     const msg = document.getElementById('actionMessage');
 
     if (!username || !password) {
@@ -133,6 +227,7 @@ async function createUser() {
             msg.innerText = `Пользователь ${username} успешно добавлен.`;
             userInp.value = '';
             passInp.value = '';
+            initMainRoleSelector(); // Сбрасываем селект на "Сотрудник"
             loadUsers();
         } else {
             msg.style.color = "#ef4444";
@@ -265,4 +360,5 @@ window.onload = function() {
     loadCurrentUserName();
     loadUsers();
     initTheme();
+    initMainRoleSelector();
 };
