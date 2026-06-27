@@ -13,13 +13,14 @@ function checkAuthResponse(response) {
 
 // Загрузка текущего имени
 function loadCurrentUserName() {
-    // Возьмем имя из сессии (обычно хранится в cookies, получим через простую логику)
-    // Либо просто сделаем fetch, но для простоты получим из логов / страницы.
-    document.getElementById('currentUserSpan').innerText = "Панель Auth";
+    // Отображение имени теперь происходит на стороне сервера через Jinja2 шаблонизатор
 }
 
 // Загрузка списка пользователей
 async function loadUsers() {
+    const tbody = document.getElementById('usersTableBody');
+    if (!tbody) return; // Если вошел обычный сотрудник, таблицы нет
+    
     try {
         const response = await fetch(`${BASE_PATH}/api/users?_=${new Date().getTime()}`);
         if (!checkAuthResponse(response)) return;
@@ -60,8 +61,10 @@ function renderUsers(users) {
 async function createUser() {
     const userInp = document.getElementById('newUsername');
     const passInp = document.getElementById('newPassword');
+    const roleInp = document.getElementById('newRole');
     const username = userInp.value.trim();
     const password = passInp.value.trim();
+    const role = roleInp ? roleInp.value : 'employee';
     const msg = document.getElementById('actionMessage');
 
     if (!username || !password) {
@@ -79,7 +82,7 @@ async function createUser() {
         const response = await fetch(`${BASE_PATH}/api/users`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-            body: JSON.stringify({ username: username, password: password, role: 'admin' })
+            body: JSON.stringify({ username: username, password: password, role: role })
         });
         
         if (!checkAuthResponse(response)) return;
@@ -161,6 +164,61 @@ function toggleTheme() {
     document.documentElement.setAttribute('data-theme', newTheme);
     localStorage.setItem('theme', newTheme);
     updateThemeIcon();
+}
+
+// Функция смены пароля
+async function changePassword() {
+    const oldInp = document.getElementById('oldPassword');
+    const newInp = document.getElementById('newPasswordSelf');
+    const confirmInp = document.getElementById('confirmPasswordSelf');
+    const msg = document.getElementById('passwordMessage');
+    
+    const oldPassword = oldInp.value;
+    const newPassword = newInp.value;
+    const confirmPassword = confirmInp.value;
+    
+    if (!oldPassword || !newPassword || !confirmPassword) {
+        msg.style.color = "#ef4444";
+        msg.style.display = "block";
+        msg.innerText = "Заполните все поля";
+        return;
+    }
+    
+    if (newPassword !== confirmPassword) {
+        msg.style.color = "#ef4444";
+        msg.style.display = "block";
+        msg.innerText = "Новые пароли не совпадают";
+        return;
+    }
+    
+    msg.style.color = "#2563eb";
+    msg.style.display = "block";
+    msg.innerText = "Смена пароля...";
+    
+    try {
+        const response = await fetch(`${BASE_PATH}/api/users/change-password`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ old_password: oldPassword, new_password: newPassword })
+        });
+        
+        if (!checkAuthResponse(response)) return;
+        const result = await response.json();
+        
+        if (response.ok) {
+            msg.style.color = "#10b981";
+            msg.innerText = "Пароль успешно изменен";
+            oldInp.value = '';
+            newInp.value = '';
+            confirmInp.value = '';
+        } else {
+            msg.style.color = "#ef4444";
+            msg.innerText = `Ошибка: ${result.error}`;
+        }
+    } catch (err) {
+        msg.style.color = "#ef4444";
+        msg.innerText = "Ошибка соединения с сервером";
+    }
 }
 
 window.onload = function() {

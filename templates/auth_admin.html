@@ -34,6 +34,7 @@
 
     <main class="main-container">
         
+        {% if session.get('role') == 'admin' %}
         <div class="panel-card">
             <div class="card-header">
                 <h2 class="header-title uppercase-accent">Добавить пользователя панели</h2>
@@ -48,6 +49,13 @@
                     <div class="input-wrapper wide-label">
                         <input type="password" id="newPassword" placeholder="пароль">
                         <span class="input-label">Password</span>
+                    </div>
+                    <div class="input-wrapper wide-label">
+                        <select id="newRole" class="select-role">
+                            <option value="employee">Сотрудник</option>
+                            <option value="admin">Администратор</option>
+                        </select>
+                        <span class="input-label">Role</span>
                     </div>
                     <button onclick="createUser()" class="btn-submit">Создать</button>
                 </div>
@@ -74,6 +82,32 @@
                         <tr><td colspan="4" class="text-center" style="padding:32px; color:#888;">Загрузка списка...</td></tr>
                     </tbody>
                 </table>
+            </div>
+        </div>
+        {% endif %}
+
+        <div class="panel-card">
+            <div class="card-header">
+                <h2 class="header-title uppercase-accent">Смена пароля</h2>
+                <p class="header-subtitle font-mono">Смена пароля от своей учетной записи</p>
+            </div>
+            <div class="card-body bg-offset">
+                <div class="form-row-multi">
+                    <div class="input-wrapper wide-label">
+                        <input type="password" id="oldPassword" placeholder="старый пароль">
+                        <span class="input-label">Старый</span>
+                    </div>
+                    <div class="input-wrapper wide-label">
+                        <input type="password" id="newPasswordSelf" placeholder="новый пароль">
+                        <span class="input-label">Новый</span>
+                    </div>
+                    <div class="input-wrapper wide-label">
+                        <input type="password" id="confirmPasswordSelf" placeholder="подтвердите новый">
+                        <span class="input-label">Повтор</span>
+                    </div>
+                    <button onclick="changePassword()" class="btn-submit">Изменить</button>
+                </div>
+                <div id="passwordMessage" class="status-msg"></div>
             </div>
         </div>
 

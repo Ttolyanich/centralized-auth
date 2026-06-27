@@ -137,6 +137,7 @@ def login():
             if user and check_password_hash(user['password_hash'], password):
                 session["auth_logged_in"] = True
                 session["username"] = user['username']
+                session["role"] = user['role']
                 return jsonify({"success": True})
             else:
                 return jsonify({"error": "Неверный логин или пароль"}), 401
@@ -176,7 +177,7 @@ def api_auth_verify():
         conn.close()
         
         if user and check_password_hash(user['password_hash'], password):
-            return jsonify({"success": True})
+            return jsonify({"success": True, "role": user['role']})
         return jsonify({"success": False, "error": "Неверный логин или пароль"}), 401
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
@@ -185,6 +186,8 @@ def api_auth_verify():
 @app.route('/api/users', methods=['GET'])
 @login_required
 def api_get_users():
+    if session.get("role") != "admin":
+        return jsonify({"error": "Forbidden: Only admins can view users"}), 403
     try:
         conn = sqlite3.connect(USERS_DB)
         conn.row_factory = sqlite3.Row
@@ -199,11 +202,15 @@ def api_get_users():
 @app.route('/api/users', methods=['POST'])
 @login_required
 def api_create_user():
+    if session.get("role") != "admin":
+        return jsonify({"error": "Forbidden: Only admins can create users"}), 403
     from werkzeug.security import generate_password_hash
     data = request.json or {}
     username = data.get('username', '').strip()
     password = data.get('password', '')
-    role = data.get('role', 'admin').strip()
+    role = data.get('role', 'employee').strip()
+    if role not in ['admin', 'employee']:
+        role = 'employee'
     
     if not username or not password:
         return jsonify({"error": "Имя пользователя и пароль обязательны"}), 400
@@ -224,6 +231,8 @@ def api_create_user():
 @app.route('/api/users/delete/<int:user_id>', methods=['POST'])
 @login_required
 def api_delete_user(user_id):
+    if session.get("role") != "admin":
+        return jsonify({"error": "Forbidden: Only admins can delete users"}), 403
     current_user = session.get("username")
     try:
         conn = sqlite3.connect(USERS_DB)
@@ -239,6 +248,38 @@ def api_delete_user(user_id):
             return jsonify({"error": "Нельзя удалить самого себя"}), 400
             
         cursor.execute("DELETE FROM users WHERE id = ?", (user_id,))
+        conn.commit()
+        conn.close()
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# API Смены пароля
+@app.route('/api/users/change-password', methods=['POST'])
+@login_required
+def api_change_password():
+    from werkzeug.security import generate_password_hash, check_password_hash
+    data = request.json or {}
+    old_password = data.get('old_password', '')
+    new_password = data.get('new_password', '')
+    
+    if not old_password or not new_password:
+        return jsonify({"error": "Старый и новый пароли обязательны"}), 400
+        
+    username = session.get("username")
+    try:
+        conn = sqlite3.connect(USERS_DB)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM users WHERE username = ?", (username,))
+        user = cursor.fetchone()
+        
+        if not user or not check_password_hash(user['password_hash'], old_password):
+            conn.close()
+            return jsonify({"error": "Неверный старый пароль"}), 400
+            
+        new_hash = generate_password_hash(new_password)
+        cursor.execute("UPDATE users SET password_hash = ? WHERE username = ?", (new_hash, username))
         conn.commit()
         conn.close()
         return jsonify({"success": True})
