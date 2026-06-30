@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  centralized-auth:
+    build: .
+    container_name: centralized-auth
+    restart: unless-stopped
+    ports:
+      - "${PORT:-5001}:${PORT:-5001}"
+    volumes:
+      - ./data:/app/data
+    env_file:
+      - .env

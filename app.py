@@ -20,6 +20,14 @@ if os.path.exists(CONFIG_PATH):
     except Exception as e:
         print(f"Error loading config: {e}")
 
+# Поддержка переменных окружения (Docker)
+if os.getenv("SECRET_KEY"):
+    config["secret_key"] = os.getenv("SECRET_KEY")
+if os.getenv("NODE_API_TOKEN"):
+    config["node_api_token"] = os.getenv("NODE_API_TOKEN")
+if os.getenv("BIND_HOST"):
+    config["bind_host"] = os.getenv("BIND_HOST")
+
 # Автогенерация secret_key при обнаружении дефолтного значения
 if config.get("secret_key") == "default-secret-key-32-chars-long-please-change" or not config.get("secret_key"):
     import secrets
@@ -62,11 +70,15 @@ class SubpathMiddleware(object):
 
 app.wsgi_app = SubpathMiddleware(app.wsgi_app, prefix='')
 
-USERS_DB = "/opt/centralized-auth/users.db"
+USERS_DB = os.getenv("DATABASE_PATH", "/opt/centralized-auth/users.db")
 
 # Инициализация базы данных
 def init_db():
     from werkzeug.security import generate_password_hash
+    # Создаем директорию базы данных, если её нет
+    db_dir = os.path.dirname(USERS_DB)
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
     conn = sqlite3.connect(USERS_DB)
     cursor = conn.cursor()
     cursor.execute("""
@@ -326,4 +338,5 @@ def api_update_user_role(user_id):
 if __name__ == '__main__':
     init_db()
     bind_host = config.get("bind_host", "0.0.0.0")
-    app.run(host=bind_host, port=5001, debug=False)
+    port = int(os.getenv("PORT", 5001))
+    app.run(host=bind_host, port=port, debug=False)
