@@ -1,7 +1,5 @@
 # Centralized Auth Server (Центральный Сервер Авторизации)
 
-<img width="1183" height="464" alt="image" src="https://github.com/user-attachments/assets/30d01ee7-40ee-4f71-865a-05e54d130803" />
-
 Данный проект представляет собой легковесный и безопасный сервер централизованной авторизации пользователей для веб-панелей управления (например, `openvpn-web`, `samba-web` и др.). Он работает на базе Flask и SQLite, предоставляя интерфейс администратора для управления пользователями и защищенный API-токен для верификации запросов от доверенных нод.
 
 ---
@@ -41,55 +39,83 @@
 
 ## Быстрый старт и развертывание
 
-### 1. Клонирование и подготовка папки
-Склонируйте репозиторий в папку `/opt/centralized-auth`:
-```bash
-sudo git clone https://github.com/Ttolyanich/centralized-auth.git /opt/centralized-auth
-```
-Назначьте владельца `root:root` для файлов:
-```bash
-sudo chown -R root:root /opt/centralized-auth
-```
+### Вариант 1. Запуск через Docker (Рекомендуемый)
 
-### 2. Установка зависимостей
-Для работы требуется Flask. Установите его:
-```bash
-sudo pip3 install flask
-```
+Самый простой и быстрый способ запустить сервер авторизации. Все данные будут сохранены на хост-машине.
 
-### 3. Первичный запуск и инициализация
-1. Запустите Flask вручную для первой инициализации:
+1. **Клонирование репозитория:**
    ```bash
+   sudo git clone https://github.com/Ttolyanich/centralized-auth.git /opt/centralized-auth
    cd /opt/centralized-auth
-   sudo python3 app.py
    ```
-2. **Внимание!** При первом запуске в консоль будет выведен сгенерированный пароль администратора:
-   ```text
-   **************************************************
-   INITIALIZATION: Created default admin user!
-   Username: admin
-   Password: <СЛУЧАЙНЫЙ_ПАРОЛЬ_ИЗ_12_СИМВОЛОВ>
-   **************************************************
+2. **Настройка окружения:**
+   Создайте файл `.env` из шаблона:
+   ```bash
+   cp .env.example .env
    ```
-   Запишите этот пароль. Также в `config.json` автоматически сгенерируются безопасные `secret_key` и `node_api_token`.
-3. Остановите процесс (`Ctrl + C`).
+   Отредактируйте `.env` (например, через `nano .env`) и укажите необходимые порты и токены.
+3. **Запуск контейнера:**
+   ```bash
+   docker compose up -d --build
+   ```
+   *Все данные (база данных пользователей `users.db` и автосгенерированный файл конфигурации) будут сохранены на хосте в созданной папке `/opt/centralized-auth/data`.*
+4. **Получение пароля администратора:**
+   При первом запуске в логи контейнера выведется автосгенерированный пароль для администратора `admin`. Посмотреть его можно командой:
+   ```bash
+   docker compose logs centralized-auth
+   ```
+   Запишите этот пароль.
 
-### 4. Настройка службы systemd
-Для автоматического запуска сервера при загрузке системы настройте службу:
-1. Скопируйте файл службы в системную директорию:
+---
+
+### Вариант 2. Нативный запуск (через systemd)
+
+1. **Клонирование и подготовка папки:**
+   Склонируйте репозиторий в папку `/opt/centralized-auth`:
    ```bash
-   sudo cp /opt/centralized-auth/centralized-auth.service /etc/systemd/system/
+   sudo git clone https://github.com/Ttolyanich/centralized-auth.git /opt/centralized-auth
    ```
-2. Обновите конфигурацию systemd и запустите службу:
+   Назначьте владельца `root:root` для файлов:
    ```bash
-   sudo systemctl daemon-reload
-   sudo systemctl enable centralized-auth
-   sudo systemctl start centralized-auth
+   sudo chown -R root:root /opt/centralized-auth
    ```
-3. Проверьте статус службы:
+2. **Установка зависимостей:**
+   Для работы требуется Flask. Установите его:
    ```bash
-   sudo systemctl status centralized-auth
+   sudo pip3 install flask
    ```
+3. **Первичный запуск и инициализация:**
+   1. Запустите Flask вручную для первой инициализации:
+      ```bash
+      cd /opt/centralized-auth
+      sudo python3 app.py
+      ```
+   2. **Внимание!** При первом запуске в консоль будет выведен сгенерированный пароль администратора:
+      ```text
+      **************************************************
+      INITIALIZATION: Created default admin user!
+      Username: admin
+      Password: <СЛУЧАЙНЫЙ_ПАРОЛЬ_ИЗ_12_СИМВОЛОВ>
+      **************************************************
+      ```
+      Запишите этот пароль. Также в `config.json` автоматически сгенерируются безопасные `secret_key` и `node_api_token`.
+   3. Остановите процесс (`Ctrl + C`).
+4. **Настройка службы systemd:**
+   Для автоматического запуска сервера при загрузке системы настройте службу:
+   1. Скопируйте файл службы в системную директорию:
+      ```bash
+      sudo cp /opt/centralized-auth/centralized-auth.service /etc/systemd/system/
+      ```
+   2. Обновите конфигурацию systemd и запустите службу:
+      ```bash
+      sudo systemctl daemon-reload
+      sudo systemctl enable centralized-auth
+      sudo systemctl start centralized-auth
+      ```
+   3. Проверьте статус службы:
+      ```bash
+      sudo systemctl status centralized-auth
+      ```
 
 ---
 
