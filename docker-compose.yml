@@ -2,6 +2,7 @@ version: '3.8'
 
 services:
   centralized-auth:
+    image: ghcr.io/ttolyanich/centralized-auth:latest
     build: .
     container_name: centralized-auth
     restart: unless-stopped
