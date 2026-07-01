@@ -95,17 +95,14 @@ def init_db():
     # Если пользователей нет, создаем администратора по умолчанию
     cursor.execute("SELECT COUNT(*) FROM users")
     if cursor.fetchone()[0] == 0:
-        import string
-        import random
-        chars = string.ascii_letters + string.digits
-        temp_pass = ''.join(random.choice(chars) for _ in range(12))
-        pw_hash = generate_password_hash(temp_pass)
+        default_pass = os.getenv("ADMIN_PASSWORD", "admin123")
+        pw_hash = generate_password_hash(default_pass)
         cursor.execute("INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)", ("admin", pw_hash, "admin"))
         conn.commit()
         print("*" * 50)
         print("INITIALIZATION: Created default admin user!")
         print("Username: admin")
-        print(f"Password: {temp_pass}")
+        print(f"Password: {default_pass}")
         print("*" * 50)
     conn.close()
 
