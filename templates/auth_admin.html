@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Central Auth Panel — Управление пользователями</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iI2M1MmYzMSI+PHBhdGggZD0iTTEyLjY1IDEwQzExLjgzIDcuNjcgOS42MSA2IDcgNmMtMy4zMSAwLTYgMi42OS02IDZzMi42OSA2IDYgNmMyLjYxIDAgNC44My0xLjY3IDUuNjUtNEgxN3Y0aDR2LTRoMnYtNEgxMi42NXpNNyAxNGMtMS4xIDAtMi0uOS0yLTJzLjktMiAyLTJzMiAuOSAyIDItLjkgMi0yIDJ6Ii8+PC9zdmc+" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+        // Немедленно применяем сохраненную тему до отрисовки интерфейса
+        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+        if (savedTheme === 'light') {
+            document.documentElement.classList.add('light-theme');
+        }
+        const CURRENT_USERNAME = "{{ session.get('username') }}";
+    </script>
+</head>
+<body>
+
+    <nav class="navbar">
+        <div class="nav-container">
+            <div class="brand-zone">
+                <div class="logo-box">A</div>
+                <span class="brand-title">AUTH <span class="accent-text">CENTER</span></span>
+            </div>
+            <div class="user-profile-zone">
+                <button id="theme-toggle" class="btn-icon-toggle" title="Переключить тему">
+                    <!-- Sun Icon (shown in dark theme) -->
+                    <svg class="sun-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+                    <!-- Moon Icon (shown in light theme) -->
+                    <svg class="moon-icon hidden" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+                </button>
+                <span id="currentUserSpan" class="current-user-name">Оператор: {{ session.get('username') }}</span>
+                <button onclick="handleLogout()" class="btn-logout">Выйти</button>
+            </div>
+        </div>
+    </nav>
+
+
+
+
+    <main class="main-container">
+        
+        {% if session.get('role') == 'admin' %}
+        <div class="panel-card">
+            <div class="card-header">
+                <h2 class="header-title uppercase-accent">Добавить пользователя панели</h2>
+                <p class="header-subtitle font-mono">Доступ на все ноды по этим данным</p>
+            </div>
+            <div class="card-body bg-offset">
+                <div class="form-row-multi">
+                    <div class="input-wrapper wide-label">
+                        <input type="text" id="newUsername" placeholder="логин">
+                        <span class="input-label">Username</span>
+                    </div>
+                    <div class="input-wrapper wide-label">
+                        <input type="password" id="newPassword" placeholder="пароль">
+                        <span class="input-label">Password</span>
+                    </div>
+                    <div class="input-wrapper wide-label">
+                        <div id="roleSelectWrapper"></div>
+                        <span class="input-label">Role</span>
+                    </div>
+                    <button onclick="createUser()" class="btn-submit">Создать</button>
+                </div>
+                <div id="actionMessage" class="status-msg"></div>
+            </div>
+        </div>
+
+        <div class="panel-card">
+            <div class="card-header">
+                <h2 class="header-title uppercase-accent">Активные аккаунты</h2>
+            </div>
+
+            <div class="table-wrapper">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Имя пользователя</th>
+                            <th>Роль</th>
+                            <th>Дата создания</th>
+                            <th class="text-right">Действия</th>
+                        </tr>
+                    </thead>
+                    <tbody id="usersTableBody">
+                        <tr><td colspan="4" class="text-center" style="padding:32px; color:#888;">Загрузка списка...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% endif %}
+
+        <div class="panel-card">
+            <div class="card-header">
+                <h2 class="header-title uppercase-accent">Смена пароля</h2>
+                <p class="header-subtitle font-mono">Смена пароля от своей учетной записи</p>
+            </div>
+            <div class="card-body bg-offset">
+                <div class="form-row-multi">
+                    <div class="input-wrapper wide-label">
+                        <input type="password" id="oldPassword" placeholder="старый пароль">
+                        <span class="input-label">Старый</span>
+                    </div>
+                    <div class="input-wrapper wide-label">
+                        <input type="password" id="newPasswordSelf" placeholder="новый пароль">
+                        <span class="input-label">Новый</span>
+                    </div>
+                    <div class="input-wrapper wide-label">
+                        <input type="password" id="confirmPasswordSelf" placeholder="подтвердите новый">
+                        <span class="input-label">Повтор</span>
+                    </div>
+                    <button onclick="changePassword()" class="btn-submit">Изменить</button>
+                </div>
+                <div id="passwordMessage" class="status-msg"></div>
+            </div>
+        </div>
+
+    </main>
+
+    <script src="{{ url_for('static', filename='js/auth_admin.js') }}"></script>
+</body>
+</html>

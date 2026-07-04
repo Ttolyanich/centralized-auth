@@ -1,0 +1,16 @@
+[Unit]
+Description=Centralized Authentication Server
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/centralized-auth
+Environment=BIND_HOST=0.0.0.0 BIND_PORT=5001
+EnvironmentFile=-/opt/centralized-auth/.env
+ExecStart=/usr/bin/python3 -m gunicorn --workers 2 --bind ${BIND_HOST}:${BIND_PORT} app:app
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
