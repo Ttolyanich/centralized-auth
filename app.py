@@ -41,27 +41,28 @@ if os.getenv("BIND_PORT"):
 elif os.getenv("PORT"):
     config["bind_port"] = int(os.getenv("PORT"))
 
-# Автогенерация secret_key при обнаружении дефолтного значения
+# Автогенерация secret_key и node_api_token при обнаружении дефолтных значений
+config_changed = False
+
 if config.get("secret_key") == "default-secret-key-32-chars-long-please-change" or not config.get("secret_key"):
     import secrets
     config["secret_key"] = secrets.token_hex(16)
-    try:
-        with open(CONFIG_PATH, "w") as f:
-            json.dump(config, f, indent=2)
-        print(f"AUTO-CONFIG: Generated secure random secret_key and saved to {CONFIG_PATH}")
-    except Exception as e:
-        print(f"Error saving auto-generated secret key: {e}")
+    config_changed = True
+    print("AUTO-CONFIG: Generated secure random secret_key")
 
-# Автогенерация node_api_token
 if config.get("node_api_token") == "default-token" or not config.get("node_api_token"):
     import secrets
     config["node_api_token"] = secrets.token_hex(16)
+    config_changed = True
+    print("AUTO-CONFIG: Generated secure random node_api_token")
+
+if config_changed:
     try:
         with open(CONFIG_PATH, "w") as f:
             json.dump(config, f, indent=2)
-        print(f"AUTO-CONFIG: Generated secure random node_api_token and saved to {CONFIG_PATH}")
+        print(f"AUTO-CONFIG: Config saved to {CONFIG_PATH}")
     except Exception as e:
-        print(f"Error saving auto-generated node token: {e}")
+        print(f"Error saving auto-generated config parameters: {e}")
 
 app = Flask(__name__)
 app.secret_key = config["secret_key"]

@@ -1,6 +1,6 @@
 const BASE_PATH = window.location.pathname.startsWith('/openvpn') ? '/openvpn' : '';
 
-let allUsers = [];
+
 
 // Проверка ответа на 401
 function checkAuthResponse(response) {
@@ -11,10 +11,7 @@ function checkAuthResponse(response) {
     return true;
 }
 
-// Загрузка текущего имени
-function loadCurrentUserName() {
-    // Отображение имени теперь происходит на стороне сервера через Jinja2 шаблонизатор
-}
+
 
 // Загрузка списка пользователей
 async function loadUsers() {
@@ -25,7 +22,7 @@ async function loadUsers() {
         const response = await fetch(`${BASE_PATH}/api/users?_=${new Date().getTime()}`);
         if (!checkAuthResponse(response)) return;
         
-        allUsers = await response.json();
+        const allUsers = await response.json();
         renderUsers(allUsers);
     } catch (error) {
         console.error("Ошибка загрузки пользователей:", error);
@@ -360,7 +357,6 @@ async function changePassword() {
 }
 
 window.onload = function() {
-    loadCurrentUserName();
     loadUsers();
     initThemeToggle();
     initMainRoleSelector();
