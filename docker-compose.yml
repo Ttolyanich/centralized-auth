@@ -7,7 +7,7 @@ services:
     container_name: centralized-auth
     restart: unless-stopped
     ports:
-      - "${BIND_PORT:-5001}:${BIND_PORT:-5001}"
+      - "${BIND_HOST:-127.0.0.1}:${BIND_PORT:-5001}:${BIND_PORT:-5001}"
     volumes:
       - ./data:/app/data
     env_file:
