@@ -148,6 +148,9 @@ def init_db():
         print("*" * 50)
     conn.close()
 
+# Инициализация базы данных при загрузке модуля
+init_db()
+
 # Декоратор авторизации
 def login_required(f):
     @wraps(f)
