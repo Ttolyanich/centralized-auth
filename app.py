@@ -1,6 +1,8 @@
 import os
 import sqlite3
 import json
+import time
+from collections import defaultdict, deque
 from functools import wraps
 from flask import Flask, render_template, request, jsonify, redirect, url_for, session
 from dotenv import load_dotenv
@@ -151,6 +153,21 @@ def init_db():
 # Инициализация базы данных при загрузке модуля
 init_db()
 
+# Простой in-memory ограничитель попыток входа (защита от перебора паролей)
+_login_attempts = defaultdict(deque)
+LOGIN_MAX_ATTEMPTS = 10
+LOGIN_WINDOW_SECONDS = 300
+
+def login_rate_limited(key):
+    now = time.time()
+    attempts = _login_attempts[key]
+    while attempts and attempts[0] < now - LOGIN_WINDOW_SECONDS:
+        attempts.popleft()
+    return len(attempts) >= LOGIN_MAX_ATTEMPTS
+
+def register_failed_login(key):
+    _login_attempts[key].append(time.time())
+
 # Декоратор авторизации
 def login_required(f):
     @wraps(f)
@@ -179,7 +196,10 @@ def login():
         
         if not username or not password:
             return jsonify({"error": "Заполните все поля"}), 400
-            
+
+        if login_rate_limited(request.remote_addr):
+            return jsonify({"error": "Слишком много неудачных попыток входа. Попробуйте позже."}), 429
+
         try:
             conn = sqlite3.connect(USERS_DB)
             conn.row_factory = sqlite3.Row
@@ -187,13 +207,14 @@ def login():
             cursor.execute("SELECT * FROM users WHERE username = ?", (username,))
             user = cursor.fetchone()
             conn.close()
-            
+
             if user and check_password_hash(user['password_hash'], password):
                 session["auth_logged_in"] = True
                 session["username"] = user['username']
                 session["role"] = user['role']
                 return jsonify({"success": True})
             else:
+                register_failed_login(request.remote_addr)
                 return jsonify({"error": "Неверный логин или пароль"}), 401
         except Exception as e:
             return jsonify({"error": f"Ошибка БД: {e}"}), 500
@@ -221,7 +242,12 @@ def api_auth_verify():
     
     if not username or not password:
         return jsonify({"error": "Missing credentials"}), 400
-        
+
+    # Лимит по паре IP-ноды + логин, чтобы перебор одного логина не блокировал всю ноду
+    rate_key = f"{request.remote_addr}:{username}"
+    if login_rate_limited(rate_key):
+        return jsonify({"success": False, "error": "Слишком много неудачных попыток входа. Попробуйте позже."}), 429
+
     try:
         conn = sqlite3.connect(USERS_DB)
         conn.row_factory = sqlite3.Row
@@ -229,9 +255,10 @@ def api_auth_verify():
         cursor.execute("SELECT * FROM users WHERE username = ?", (username,))
         user = cursor.fetchone()
         conn.close()
-        
+
         if user and check_password_hash(user['password_hash'], password):
             return jsonify({"success": True, "role": user['role']})
+        register_failed_login(rate_key)
         return jsonify({"success": False, "error": "Неверный логин или пароль"}), 401
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
