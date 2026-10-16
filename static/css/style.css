@@ -1,17 +1,17 @@
-/* Глобальные переменные и дизайн-система — Modern Enterprise SaaS */
+/* Глобальные переменные и дизайн-система — Super Basic Dark & Crisp Light */
 :root {
-    --bg-main: #0b1120;
-    --bg-card: #0f172a;
-    --bg-offset: #1e293b;
-    --border-color: rgba(148, 163, 184, 0.12);
-    --border-hover: rgba(59, 130, 246, 0.4);
+    --bg-main: #141416;
+    --bg-card: #1c1c1f;
+    --bg-offset: #26262b;
+    --border-color: #2f2f35;
+    --border-hover: #484852;
     
-    --text-main: #f8fafc;
-    --text-muted: #94a3b8;
+    --text-main: #f4f4f6;
+    --text-muted: #9e9ea7;
     
     --accent: #3b82f6;
     --accent-hover: #2563eb;
-    --accent-glow: rgba(59, 130, 246, 0.25);
+    --accent-glow: rgba(59, 130, 246, 0.15);
     
     --success: #10b981;
     --danger: #ef4444;
@@ -19,20 +19,20 @@
     --info: #06b6d4;
 }
 
-/* Переменные для светлой темы */
+/* Переменные для светлой темы — чистый светлый стиль без затемнений */
 .light-theme {
-    --bg-main: #f8fafc;
+    --bg-main: #f6f7f9;
     --bg-card: #ffffff;
-    --bg-offset: #f1f5f9;
-    --border-color: #e2e8f0;
-    --border-hover: #3b82f6;
+    --bg-offset: #eff1f4;
+    --border-color: #e2e4e8;
+    --border-hover: #c4c7cf;
     
-    --text-main: #0f172a;
-    --text-muted: #64748b;
+    --text-main: #18181b;
+    --text-muted: #6b7280;
     
     --accent: #2563eb;
     --accent-hover: #1d4ed8;
-    --accent-glow: rgba(37, 99, 235, 0.15);
+    --accent-glow: rgba(37, 99, 235, 0.12);
     
     --success: #10b981;
     --danger: #ef4444;
@@ -53,9 +53,6 @@ body {
     min-height: 100vh;
     display: flex;
     flex-direction: column;
-    background-image: 
-        radial-gradient(circle at 10% 10%, rgba(59, 130, 246, 0.08) 0%, transparent 40%),
-        radial-gradient(circle at 90% 90%, rgba(99, 102, 241, 0.06) 0%, transparent 40%);
 }
 
 /* Стилизация страницы входа */
@@ -1203,8 +1200,8 @@ body {
     padding: 20px 24px;
     border-radius: 16px;
     border: 1px solid var(--border-color);
-    background: linear-gradient(135deg, rgba(197, 47, 49, 0.1), rgba(255, 255, 255, 0.02));
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+    background: var(--bg-card);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
 }
 
 .page-kicker {
