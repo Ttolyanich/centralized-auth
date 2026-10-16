@@ -1,4 +1,4 @@
-const BASE_PATH = window.location.pathname.startsWith('/openvpn') ? '/openvpn' : '';
+const BASE_PATH = window.location.pathname.startsWith('/auth') ? '/auth' : '';
 
 
 

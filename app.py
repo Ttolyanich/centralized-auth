@@ -1,8 +1,8 @@
 import os
+import re
 import sqlite3
 import json
 import time
-from collections import defaultdict, deque
 from functools import wraps
 from flask import Flask, render_template, request, jsonify, redirect, url_for, session
 from dotenv import load_dotenv
@@ -11,6 +11,14 @@ from dotenv import load_dotenv
 load_dotenv()
 from werkzeug.middleware.proxy_fix import ProxyFix
 
+# Попытка импорта ldap3
+try:
+    import ldap3
+    from ldap3 import Server, Connection, ALL, SUBTREE
+    LDAP_AVAILABLE = True
+except ImportError:
+    LDAP_AVAILABLE = False
+
 # Загрузка конфигурации
 CONFIG_PATH = os.getenv("OPENVPN_WEB_CONFIG", "/opt/centralized-auth/config.json")
 config = {
@@ -18,7 +26,17 @@ config = {
     "secret_key": "default-secret-key-32-chars-long-please-change",
     "node_api_token": "default-token",
     "bind_host": "0.0.0.0",
-    "bind_port": 5001
+    "bind_port": 5001,
+    # LDAP настройки
+    "ldap_enabled": False,
+    "ldap_server": "ldap://127.0.0.1:389",
+    "ldap_domain": "",
+    "ldap_base_dn": "",
+    "ldap_bind_user": "",
+    "ldap_bind_password": "",
+    "ldap_required_group": "",
+    "ldap_admin_group": "",
+    "ldap_nested_groups": True
 }
 
 if os.path.exists(CONFIG_PATH):
@@ -31,7 +49,7 @@ if os.path.exists(CONFIG_PATH):
     except Exception as e:
         print(f"Error loading config: {e}")
 
-# Поддержка переменных окружения (Docker)
+# Поддержка переменных окружения (.env / Docker)
 if os.getenv("SECRET_KEY"):
     config["secret_key"] = os.getenv("SECRET_KEY")
 if os.getenv("NODE_API_TOKEN"):
@@ -43,7 +61,27 @@ if os.getenv("BIND_PORT"):
 elif os.getenv("PORT"):
     config["bind_port"] = int(os.getenv("PORT"))
 
-# Автогенерация secret_key и node_api_token при обнаружении дефолтных значений
+# LDAP переменные
+if os.getenv("LDAP_ENABLED"):
+    config["ldap_enabled"] = os.getenv("LDAP_ENABLED", "").lower() in ["true", "1", "yes"]
+if os.getenv("LDAP_SERVER"):
+    config["ldap_server"] = os.getenv("LDAP_SERVER")
+if os.getenv("LDAP_DOMAIN"):
+    config["ldap_domain"] = os.getenv("LDAP_DOMAIN")
+if os.getenv("LDAP_BASE_DN"):
+    config["ldap_base_dn"] = os.getenv("LDAP_BASE_DN")
+if os.getenv("LDAP_BIND_USER"):
+    config["ldap_bind_user"] = os.getenv("LDAP_BIND_USER")
+if os.getenv("LDAP_BIND_PASSWORD"):
+    config["ldap_bind_password"] = os.getenv("LDAP_BIND_PASSWORD")
+if os.getenv("LDAP_REQUIRED_GROUP"):
+    config["ldap_required_group"] = os.getenv("LDAP_REQUIRED_GROUP").strip()
+if os.getenv("LDAP_ADMIN_GROUP"):
+    config["ldap_admin_group"] = os.getenv("LDAP_ADMIN_GROUP").strip()
+if os.getenv("LDAP_NESTED_GROUPS"):
+    config["ldap_nested_groups"] = os.getenv("LDAP_NESTED_GROUPS", "true").lower() in ["true", "1", "yes"]
+
+# Автогенерация secret_key и node_api_token при первом старте
 config_changed = False
 
 if config.get("secret_key") == "default-secret-key-32-chars-long-please-change" or not config.get("secret_key"):
@@ -116,14 +154,21 @@ app.wsgi_app = SubpathMiddleware(app.wsgi_app, prefix='')
 
 USERS_DB = os.getenv("DATABASE_PATH", "/opt/centralized-auth/users.db")
 
+def get_db_connection():
+    conn = sqlite3.connect(USERS_DB, timeout=10.0)
+    conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("PRAGMA busy_timeout=5000;")
+    conn.row_factory = sqlite3.Row
+    return conn
+
 # Инициализация базы данных
 def init_db():
     from werkzeug.security import generate_password_hash
-    # Создаем директорию базы данных, если её нет
     db_dir = os.path.dirname(USERS_DB)
     if db_dir:
         os.makedirs(db_dir, exist_ok=True)
-    conn = sqlite3.connect(USERS_DB)
+        
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
@@ -134,6 +179,14 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    # Таблица для ограничения попыток входа (работает корректно при нескольких воркерах Gunicorn)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS rate_limits (
+            rate_key TEXT NOT NULL,
+            attempt_time REAL NOT NULL
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_rate_limits ON rate_limits (rate_key, attempt_time)")
     conn.commit()
     
     # Если пользователей нет, создаем администратора по умолчанию
@@ -150,23 +203,163 @@ def init_db():
         print("*" * 50)
     conn.close()
 
-# Инициализация базы данных при загрузке модуля
 init_db()
 
-# Простой in-memory ограничитель попыток входа (защита от перебора паролей)
-_login_attempts = defaultdict(deque)
+# SQLite-based rate limiter (безопасен при gunicorn multi-workers)
 LOGIN_MAX_ATTEMPTS = 10
 LOGIN_WINDOW_SECONDS = 300
 
 def login_rate_limited(key):
     now = time.time()
-    attempts = _login_attempts[key]
-    while attempts and attempts[0] < now - LOGIN_WINDOW_SECONDS:
-        attempts.popleft()
-    return len(attempts) >= LOGIN_MAX_ATTEMPTS
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        # Очистка устаревших записей
+        cursor.execute("DELETE FROM rate_limits WHERE attempt_time < ?", (now - LOGIN_WINDOW_SECONDS,))
+        cursor.execute("SELECT COUNT(*) FROM rate_limits WHERE rate_key = ? AND attempt_time >= ?", (key, now - LOGIN_WINDOW_SECONDS))
+        count = cursor.fetchone()[0]
+        conn.commit()
+        conn.close()
+        return count >= LOGIN_MAX_ATTEMPTS
+    except Exception as e:
+        print(f"Rate limit check error: {e}")
+        return False
 
 def register_failed_login(key):
-    _login_attempts[key].append(time.time())
+    now = time.time()
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO rate_limits (rate_key, attempt_time) VALUES (?, ?)", (key, now))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"Register failed login error: {e}")
+
+# Санитизация имен пользователей
+def sanitize_username(username):
+    if not username:
+        return None
+    username = username.strip()
+    if not re.match(r"^[a-zA-Z0-9_.@-]{2,64}$", username):
+        return None
+    return username
+
+# Аутентификация через Active Directory / LDAP с проверкой групп
+def authenticate_ldap(username, password):
+    """
+    Проверяет учетные данные пользователя в домене Active Directory / LDAP.
+    Проверяет членство в группе LDAP_REQUIRED_GROUP (если задана).
+    Назначает роль 'admin' если состоит в LDAP_ADMIN_GROUP, иначе 'employee'.
+    Возвращает: (success: bool, role: str, full_name: str, error_msg: str)
+    """
+    if not config["ldap_enabled"]:
+        return False, None, None, "LDAP отключен"
+
+    if not LDAP_AVAILABLE:
+        print("WARNING: LDAP_ENABLED is true, but 'ldap3' module is not installed.")
+        return False, None, None, "Модуль ldap3 не установлен на сервере"
+
+    ldap_server = config.get("ldap_server")
+    ldap_domain = config.get("ldap_domain")
+    base_dn = config.get("ldap_base_dn")
+    bind_user = config.get("ldap_bind_user")
+    bind_password = config.get("ldap_bind_password")
+    req_group = config.get("ldap_required_group")
+    admin_group = config.get("ldap_admin_group")
+
+    if not ldap_server or not base_dn:
+        return False, None, None, "LDAP сервер или Base DN не настроены"
+
+    # Формируем имя пользователя для поиска (отсекаем доменную приставку если передана)
+    clean_user = username
+    if "@" in clean_user:
+        clean_user = clean_user.split("@")[0]
+    elif "\\" in clean_user:
+        clean_user = clean_user.split("\\")[-1]
+
+    try:
+        server = Server(ldap_server, get_info=ALL, connect_timeout=5)
+        
+        # Шаг 1: Подключение под сервисной учетной записью для поиска пользователя
+        if bind_user and bind_password:
+            service_conn = Connection(server, user=bind_user, password=bind_password, auto_bind=True)
+        else:
+            # Анонимный bind, если сервисный аккаунт не указан
+            service_conn = Connection(server, auto_bind=True)
+
+        # Поиск пользователя по sAMAccountName или userPrincipalName
+        search_filter = f"(&(objectCategory=person)(objectClass=user)(|(sAMAccountName={clean_user})(userPrincipalName={clean_user}@{ldap_domain})(mail={clean_user})))"
+        attributes = ['distinguishedName', 'sAMAccountName', 'displayName', 'mail', 'memberOf']
+
+        service_conn.search(search_base=base_dn, search_filter=search_filter, search_scope=SUBTREE, attributes=attributes)
+
+        if not service_conn.entries:
+            service_conn.unbind()
+            return False, None, None, "Пользователь домена не найден"
+
+        user_entry = service_conn.entries[0]
+        user_dn = str(user_entry.distinguishedName)
+        display_name = str(user_entry.displayName) if hasattr(user_entry, 'displayName') and user_entry.displayName else clean_user
+        
+        # Получаем список групп пользователя
+        user_groups = []
+        if hasattr(user_entry, 'memberOf') and user_entry.memberOf:
+            user_groups = [str(g).lower() for g in user_entry.memberOf]
+
+        service_conn.unbind()
+
+        # Шаг 2: Проверка пароля пользователя (прямой Simple Bind под DN пользователя)
+        user_conn = Connection(server, user=user_dn, password=password)
+        if not user_conn.bind():
+            return False, None, None, "Неверный пароль доменной учетной записи"
+        user_conn.unbind()
+
+        # Шаг 3: Проверка членства в разрешенной группе (LDAP_REQUIRED_GROUP)
+        def is_member_of_group(target_group):
+            if not target_group:
+                return False
+            target_lower = target_group.lower()
+            # Прямое совпадение по DN
+            for g in user_groups:
+                if target_lower == g or f"cn={target_lower}," in g:
+                    return True
+            
+            # Рекурсивный поиск в AD (LDAP_MATCHING_RULE_IN_CHAIN: 1.2.840.113556.1.4.1941)
+            if config.get("ldap_nested_groups") and bind_user and bind_password:
+                try:
+                    s_conn = Connection(server, user=bind_user, password=bind_password, auto_bind=True)
+                    # Если передан короткий CN группы:
+                    grp_filter = f"(&(objectCategory=group)(|(cn={target_group})(distinguishedName={target_group})))"
+                    s_conn.search(search_base=base_dn, search_filter=grp_filter, search_scope=SUBTREE, attributes=['distinguishedName'])
+                    if s_conn.entries:
+                        group_dn = str(s_conn.entries[0].distinguishedName)
+                        nested_filter = f"(&(objectCategory=person)(objectClass=user)(distinguishedName={user_dn})(memberOf:1.2.840.113556.1.4.1941:={group_dn}))"
+                        s_conn.search(search_base=base_dn, search_filter=nested_filter, search_scope=SUBTREE, attributes=['distinguishedName'])
+                        is_member = len(s_conn.entries) > 0
+                        s_conn.unbind()
+                        return is_member
+                except Exception as e:
+                    print(f"Error checking nested group: {e}")
+            return False
+
+        if req_group:
+            if not is_member_of_group(req_group):
+                return False, None, None, f"Доступ запрещен: пользователь не состоит в группе '{req_group}'"
+
+        # Шаг 4: Определение роли (admin или employee)
+        role = "employee"
+        if admin_group and is_member_of_group(admin_group):
+            role = "admin"
+        elif not admin_group:
+            # Если админ-группа не задана, но пользователь прошел проверку req_group:
+            role = "admin"
+
+        return True, role, display_name, None
+
+    except Exception as e:
+        print(f"LDAP auth error: {e}")
+        return False, None, None, f"Ошибка соединения с контроллером домена: {e}"
 
 # Декоратор авторизации
 def login_required(f):
@@ -183,7 +376,12 @@ def login_required(f):
 @app.route('/')
 @login_required
 def index():
-    return render_template('auth_admin.html')
+    return render_template(
+        'auth_admin.html',
+        ldap_enabled=config.get("ldap_enabled", False),
+        ldap_domain=config.get("ldap_domain", ""),
+        ldap_group=config.get("ldap_required_group", "")
+    )
 
 # Вход в систему
 @app.route('/login', methods=['GET', 'POST'])
@@ -191,33 +389,51 @@ def login():
     from werkzeug.security import check_password_hash
     if request.method == 'POST':
         data = request.json or {}
-        username = data.get('username', '').strip()
+        raw_user = data.get('username', '')
         password = data.get('password', '')
         
+        username = sanitize_username(raw_user)
         if not username or not password:
-            return jsonify({"error": "Заполните все поля"}), 400
+            return jsonify({"error": "Заполните все поля корректными данными"}), 400
 
         if login_rate_limited(request.remote_addr):
-            return jsonify({"error": "Слишком много неудачных попыток входа. Попробуйте позже."}), 429
+            return jsonify({"error": "Слишком много неудачных попыток входа. Попробуйте через 5 минут."}), 429
 
+        # 1. Сначала проверяем локальную базу пользователей SQLite (fallback для локального admin)
+        user = None
         try:
-            conn = sqlite3.connect(USERS_DB)
-            conn.row_factory = sqlite3.Row
+            conn = get_db_connection()
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM users WHERE username = ?", (username,))
             user = cursor.fetchone()
             conn.close()
-
-            if user and check_password_hash(user['password_hash'], password):
-                session["auth_logged_in"] = True
-                session["username"] = user['username']
-                session["role"] = user['role']
-                return jsonify({"success": True})
-            else:
-                register_failed_login(request.remote_addr)
-                return jsonify({"error": "Неверный логин или пароль"}), 401
         except Exception as e:
-            return jsonify({"error": f"Ошибка БД: {e}"}), 500
+            print(f"DB error during login: {e}")
+
+        if user and check_password_hash(user['password_hash'], password):
+            session["auth_logged_in"] = True
+            session["username"] = user['username']
+            session["role"] = user['role']
+            session["auth_source"] = "local"
+            return jsonify({"success": True, "role": user['role']})
+
+        # 2. Если в локальной базе нет или пароль не подошел, пробуем авторизацию через Active Directory / LDAP
+        if config["ldap_enabled"]:
+            ldap_ok, ldap_role, full_name, ldap_err = authenticate_ldap(username, password)
+            if ldap_ok:
+                session["auth_logged_in"] = True
+                session["username"] = username
+                session["role"] = ldap_role
+                session["full_name"] = full_name
+                session["auth_source"] = "ldap"
+                return jsonify({"success": True, "role": ldap_role})
+            elif ldap_err and "не состоит в группе" in ldap_err:
+                register_failed_login(request.remote_addr)
+                return jsonify({"error": ldap_err}), 403
+
+        # Ошибка входа
+        register_failed_login(request.remote_addr)
+        return jsonify({"error": "Неверный логин или пароль"}), 401
             
     return render_template('login.html')
 
@@ -226,9 +442,11 @@ def login():
 def logout():
     session.pop("auth_logged_in", None)
     session.pop("username", None)
+    session.pop("role", None)
+    session.pop("auth_source", None)
     return jsonify({"success": True})
 
-# Эндпоинт верификации для нод
+# Эндпоинт верификации для нод (OpenVPN, Samba)
 @app.route('/api/auth/verify', methods=['POST'])
 def api_auth_verify():
     from werkzeug.security import check_password_hash
@@ -237,43 +455,64 @@ def api_auth_verify():
         return jsonify({"error": "Unauthorized Node"}), 403
         
     data = request.json or {}
-    username = data.get('username', '').strip()
+    raw_user = data.get('username', '')
     password = data.get('password', '')
     
+    username = sanitize_username(raw_user)
     if not username or not password:
-        return jsonify({"error": "Missing credentials"}), 400
+        return jsonify({"error": "Missing or invalid credentials"}), 400
 
-    # Лимит по паре IP-ноды + логин, чтобы перебор одного логина не блокировал всю ноду
+    # Лимит по паре IP-ноды + логин
     rate_key = f"{request.remote_addr}:{username}"
     if login_rate_limited(rate_key):
         return jsonify({"success": False, "error": "Слишком много неудачных попыток входа. Попробуйте позже."}), 429
 
+    # 1. Проверяем локальную БД
     try:
-        conn = sqlite3.connect(USERS_DB)
-        conn.row_factory = sqlite3.Row
+        conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM users WHERE username = ?", (username,))
         user = cursor.fetchone()
         conn.close()
 
         if user and check_password_hash(user['password_hash'], password):
-            return jsonify({"success": True, "role": user['role']})
-        register_failed_login(rate_key)
-        return jsonify({"success": False, "error": "Неверный логин или пароль"}), 401
+            return jsonify({
+                "success": True, 
+                "username": user['username'],
+                "role": user['role'], 
+                "source": "local"
+            })
     except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+        print(f"Error checking local user in verify: {e}")
 
-# API Управления пользователями
+    # 2. Проверяем Active Directory / LDAP
+    if config["ldap_enabled"]:
+        ldap_ok, ldap_role, full_name, ldap_err = authenticate_ldap(username, password)
+        if ldap_ok:
+            return jsonify({
+                "success": True, 
+                "username": username,
+                "role": ldap_role, 
+                "full_name": full_name,
+                "source": "ldap"
+            })
+        elif ldap_err and "не состоит в группе" in ldap_err:
+            register_failed_login(rate_key)
+            return jsonify({"success": False, "error": ldap_err}), 403
+
+    register_failed_login(rate_key)
+    return jsonify({"success": False, "error": "Неверный логин или пароль"}), 401
+
+# API Управления пользователями панели
 @app.route('/api/users', methods=['GET'])
 @login_required
 def api_get_users():
     if session.get("role") != "admin":
         return jsonify({"error": "Forbidden: Only admins can view users"}), 403
     try:
-        conn = sqlite3.connect(USERS_DB)
-        conn.row_factory = sqlite3.Row
+        conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT id, username, role, created_at FROM users")
+        cursor.execute("SELECT id, username, role, created_at FROM users ORDER BY id ASC")
         users = [dict(row) for row in cursor.fetchall()]
         conn.close()
         return jsonify(users)
@@ -287,25 +526,28 @@ def api_create_user():
         return jsonify({"error": "Forbidden: Only admins can create users"}), 403
     from werkzeug.security import generate_password_hash
     data = request.json or {}
-    username = data.get('username', '').strip()
+    raw_user = data.get('username', '')
     password = data.get('password', '')
     role = data.get('role', 'employee').strip()
+    
+    username = sanitize_username(raw_user)
+    if not username:
+        return jsonify({"error": "Недопустимый формат логина"}), 400
+    if not password or len(password) < 4:
+        return jsonify({"error": "Пароль должен содержать минимум 4 символа"}), 400
     if role not in ['admin', 'employee']:
         role = 'employee'
-    
-    if not username or not password:
-        return jsonify({"error": "Имя пользователя и пароль обязательны"}), 400
         
     pw_hash = generate_password_hash(password)
     try:
-        conn = sqlite3.connect(USERS_DB)
+        conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)", (username, pw_hash, role))
         conn.commit()
         conn.close()
         return jsonify({"success": True})
     except sqlite3.IntegrityError:
-        return jsonify({"error": "Пользователь с таким именем уже существует"}), 400
+        return jsonify({"error": "Пользователь с таким логином уже существует"}), 400
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -316,8 +558,7 @@ def api_delete_user(user_id):
         return jsonify({"error": "Forbidden: Only admins can delete users"}), 403
     current_user = session.get("username")
     try:
-        conn = sqlite3.connect(USERS_DB)
-        conn.row_factory = sqlite3.Row
+        conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT username FROM users WHERE id = ?", (user_id,))
         user = cursor.fetchone()
@@ -326,7 +567,7 @@ def api_delete_user(user_id):
             return jsonify({"error": "Пользователь не найден"}), 404
         if user['username'] == current_user:
             conn.close()
-            return jsonify({"error": "Нельзя удалить самого себя"}), 400
+            return jsonify({"error": "Нельзя удалить текущего авторизованного администратора"}), 400
             
         cursor.execute("DELETE FROM users WHERE id = ?", (user_id,))
         conn.commit()
@@ -348,9 +589,11 @@ def api_change_password():
         return jsonify({"error": "Старый и новый пароли обязательны"}), 400
         
     username = session.get("username")
+    if session.get("auth_source") == "ldap":
+        return jsonify({"error": "Пароли доменных учетных записей Active Directory изменяются через Windows / контроллер домена"}), 400
+
     try:
-        conn = sqlite3.connect(USERS_DB)
-        conn.row_factory = sqlite3.Row
+        conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM users WHERE username = ?", (username,))
         user = cursor.fetchone()
@@ -381,18 +624,14 @@ def api_update_user_role(user_id):
         
     current_username = session.get("username")
     try:
-        conn = sqlite3.connect(USERS_DB)
-        conn.row_factory = sqlite3.Row
+        conn = get_db_connection()
         cursor = conn.cursor()
-        
-        # Проверяем существование пользователя
         cursor.execute("SELECT * FROM users WHERE id = ?", (user_id,))
         user = cursor.fetchone()
         if not user:
             conn.close()
             return jsonify({"error": "Пользователь не найден"}), 404
             
-        # Запрещаем менять роль самому себе
         if user['username'] == current_username:
             conn.close()
             return jsonify({"error": "Вы не можете изменить роль самому себе"}), 400
