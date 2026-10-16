@@ -557,6 +557,30 @@ body {
     color: var(--accent-hover) !important;
 }
 
+.btn-action-reset {
+    text-decoration: none;
+    background-color: var(--bg-offset) !important;
+    border: 1px solid var(--border-color) !important;
+    color: #60a5fa !important;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.btn-action-reset:hover {
+    border-color: var(--accent) !important;
+    background-color: rgba(59, 130, 246, 0.15) !important;
+    color: #93c5fd !important;
+    box-shadow: 0 0 8px var(--accent-glow);
+}
+
+
 .btn-action-download {
     background: linear-gradient(135deg, var(--accent), var(--accent-hover)) !important;
     color: white !important;

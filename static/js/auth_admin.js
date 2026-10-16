@@ -152,15 +152,20 @@ function renderUsers(users) {
         tdDate.innerText = user.created_at;
         row.appendChild(tdDate);
         
-        // Действия (Нельзя удалить самого себя)
+        // Действия (Сброс пароля без пересоздания + удаление)
         const tdActions = document.createElement('td');
         tdActions.className = 'text-right';
         tdActions.style.padding = '14px 24px';
+        tdActions.style.whiteSpace = 'nowrap';
+        
+        let actionsHtml = `<button onclick="openResetModal(${user.id}, '${safeName}')" class="btn-action-reset" style="margin-right: 8px;" title="Сбросить пароль пользователя">🔑 Сброс пароля</button>`;
+        
         if (user.username === CURRENT_USERNAME) {
-            tdActions.innerHTML = `<span style="color:#666; font-size:12px; padding: 6px 12px; display:inline-block;">Текущий</span>`;
+            actionsHtml += `<span style="color:#666; font-size:12px; padding: 6px 12px; display:inline-block;">Текущий</span>`;
         } else {
-            tdActions.innerHTML = `<button onclick="deleteUser(${user.id}, '${safeName}')" class="btn-action-revoke">Удалить</button>`;
+            actionsHtml += `<button onclick="deleteUser(${user.id}, '${safeName}')" class="btn-action-revoke" title="Удалить аккаунт">Удалить</button>`;
         }
+        tdActions.innerHTML = actionsHtml;
         row.appendChild(tdActions);
         
         tbody.appendChild(row);
@@ -353,6 +358,91 @@ async function changePassword() {
     } catch (err) {
         msg.style.color = "#ef4444";
         msg.innerText = "Ошибка соединения с сервером";
+    }
+}
+
+// Управление сбросом пароля локальных пользователей администратором
+let currentResetUserId = null;
+
+function openResetModal(userId, username) {
+    currentResetUserId = userId;
+    const modal = document.getElementById('resetPasswordModal');
+    const userLabel = document.getElementById('resetModalUsername');
+    const passwordInput = document.getElementById('resetModalNewPassword');
+    const statusMsg = document.getElementById('resetModalStatus');
+    
+    if (userLabel) userLabel.innerText = username;
+    if (passwordInput) passwordInput.value = '';
+    if (statusMsg) {
+        statusMsg.style.display = 'none';
+        statusMsg.innerText = '';
+    }
+    if (modal) modal.style.display = 'flex';
+}
+
+function closeResetModal() {
+    currentResetUserId = null;
+    const modal = document.getElementById('resetPasswordModal');
+    if (modal) modal.style.display = 'none';
+}
+
+function generateRandomPassword() {
+    const chars = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$%&*";
+    let password = "";
+    for (let i = 0; i < 12; i++) {
+        password += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    const input = document.getElementById('resetModalNewPassword');
+    if (input) input.value = password;
+}
+
+async function confirmResetPassword() {
+    if (!currentResetUserId) return;
+    const passwordInput = document.getElementById('resetModalNewPassword');
+    const statusMsg = document.getElementById('resetModalStatus');
+    const newPassword = passwordInput ? passwordInput.value.trim() : '';
+    
+    if (!newPassword || newPassword.length < 4) {
+        if (statusMsg) {
+            statusMsg.style.display = 'block';
+            statusMsg.className = 'status-msg error';
+            statusMsg.innerText = 'Пароль должен содержать минимум 4 символа';
+        }
+        return;
+    }
+    
+    try {
+        const response = await fetch(`${BASE_PATH}/api/users/reset-password/${currentResetUserId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ new_password: newPassword })
+        });
+        
+        if (!checkAuthResponse(response)) return;
+        const result = await response.json();
+        
+        if (response.ok && result.success) {
+            if (statusMsg) {
+                statusMsg.style.display = 'block';
+                statusMsg.className = 'status-msg success';
+                statusMsg.innerText = result.message || 'Пароль успешно обновлен!';
+            }
+            setTimeout(() => {
+                closeResetModal();
+            }, 1200);
+        } else {
+            if (statusMsg) {
+                statusMsg.style.display = 'block';
+                statusMsg.className = 'status-msg error';
+                statusMsg.innerText = result.error || 'Ошибка сброса пароля';
+            }
+        }
+    } catch (e) {
+        if (statusMsg) {
+            statusMsg.style.display = 'block';
+            statusMsg.className = 'status-msg error';
+            statusMsg.innerText = 'Ошибка соединения с сервером';
+        }
     }
 }
 

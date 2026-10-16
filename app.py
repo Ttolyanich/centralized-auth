@@ -643,6 +643,37 @@ def api_update_user_role(user_id):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+# API Сброса пароля пользователя администратором (без пересоздания)
+@app.route('/api/users/reset-password/<int:user_id>', methods=['POST'])
+@login_required
+def api_admin_reset_password(user_id):
+    if session.get("role") != "admin":
+        return jsonify({"error": "Forbidden: Only admins can reset user passwords"}), 403
+        
+    data = request.json or {}
+    new_password = data.get('new_password', '').strip()
+    if not new_password or len(new_password) < 4:
+        return jsonify({"error": "Пароль должен содержать минимум 4 символа"}), 400
+        
+    from werkzeug.security import generate_password_hash
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+        user = cursor.fetchone()
+        if not user:
+            conn.close()
+            return jsonify({"error": "Пользователь не найден"}), 404
+            
+        new_hash = generate_password_hash(new_password)
+        cursor.execute("UPDATE users SET password_hash = ? WHERE id = ?", (new_hash, user_id))
+        conn.commit()
+        conn.close()
+        return jsonify({"success": True, "message": f"Пароль для {user['username']} успешно обновлен"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 if __name__ == '__main__':
     init_db()
     app.run(host=config["bind_host"], port=config["bind_port"], debug=False)
