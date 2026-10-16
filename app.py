@@ -279,6 +279,7 @@ def authenticate_ldap(username, password):
         clean_user = clean_user.split("\\")[-1]
 
     try:
+        print(f"[LDAP] Попытка входа пользователя '{username}' (clean_user: '{clean_user}') на сервер {ldap_server}...")
         server = Server(ldap_server, get_info=ALL, connect_timeout=5)
         
         # Шаг 1: Подключение под сервисной учетной записью для поиска пользователя
@@ -288,19 +289,22 @@ def authenticate_ldap(username, password):
             # Анонимный bind, если сервисный аккаунт не указан
             service_conn = Connection(server, auto_bind=True)
 
-        # Поиск пользователя по sAMAccountName или userPrincipalName
-        search_filter = f"(&(objectCategory=person)(objectClass=user)(|(sAMAccountName={clean_user})(userPrincipalName={clean_user}@{ldap_domain})(mail={clean_user})))"
+        # Поиск пользователя по sAMAccountName, userPrincipalName или mail
+        search_filter = f"(&(objectCategory=person)(objectClass=user)(|(sAMAccountName={clean_user})(sAMAccountName={username})(userPrincipalName={username})(userPrincipalName={clean_user}@{ldap_domain})(mail={username})(mail={clean_user})))"
         attributes = ['distinguishedName', 'sAMAccountName', 'displayName', 'mail', 'memberOf']
 
+        print(f"[LDAP] Поиск в base_dn '{base_dn}' по фильтру: {search_filter}")
         service_conn.search(search_base=base_dn, search_filter=search_filter, search_scope=SUBTREE, attributes=attributes)
 
         if not service_conn.entries:
             service_conn.unbind()
-            return False, None, None, "Пользователь домена не найден"
+            print(f"[LDAP] Пользователь '{username}' не найден в каталоге AD.")
+            return False, None, None, f"Пользователь '{username}' не найден в домене Active Directory"
 
         user_entry = service_conn.entries[0]
         user_dn = str(user_entry.distinguishedName)
         display_name = str(user_entry.displayName) if hasattr(user_entry, 'displayName') and user_entry.displayName else clean_user
+        print(f"[LDAP] Пользователь найден: DN={user_dn}, displayName={display_name}")
         
         # Получаем список групп пользователя
         user_groups = []
@@ -312,8 +316,10 @@ def authenticate_ldap(username, password):
         # Шаг 2: Проверка пароля пользователя (прямой Simple Bind под DN пользователя)
         user_conn = Connection(server, user=user_dn, password=password)
         if not user_conn.bind():
+            print(f"[LDAP] Неверный пароль для DN: {user_dn}")
             return False, None, None, "Неверный пароль доменной учетной записи"
         user_conn.unbind()
+        print(f"[LDAP] Пароль пользователя '{username}' успешно подтвержден контроллером домена.")
 
         # Шаг 3: Проверка членства в разрешенной группе (LDAP_REQUIRED_GROUP)
         def is_member_of_group(target_group):
@@ -340,12 +346,13 @@ def authenticate_ldap(username, password):
                         s_conn.unbind()
                         return is_member
                 except Exception as e:
-                    print(f"Error checking nested group: {e}")
+                    print(f"[LDAP] Ошибка проверки вложенных групп: {e}")
             return False
 
         if req_group:
             if not is_member_of_group(req_group):
-                return False, None, None, f"Доступ запрещен: пользователь не состоит в группе '{req_group}'"
+                print(f"[LDAP] Отказ в доступе: пользователь '{username}' не состоит в группе '{req_group}'. Группы пользователя: {user_groups}")
+                return False, None, None, f"Доступ запрещен: учетная запись не состоит в группе '{req_group}'"
 
         # Шаг 4: Определение роли (admin или employee)
         role = "employee"
@@ -355,11 +362,12 @@ def authenticate_ldap(username, password):
             # Если админ-группа не задана, но пользователь прошел проверку req_group:
             role = "admin"
 
+        print(f"[LDAP] Авторизация успешна! Роль: {role}, имя: {display_name}")
         return True, role, display_name, None
 
     except Exception as e:
-        print(f"LDAP auth error: {e}")
-        return False, None, None, f"Ошибка соединения с контроллером домена: {e}"
+        print(f"[LDAP ERROR] Ошибка соединения с контроллером домена: {e}")
+        return False, None, None, f"Ошибка соединения с LDAP контроллером: {e}"
 
 # Декоратор авторизации
 def login_required(f):
@@ -427,11 +435,12 @@ def login():
                 session["full_name"] = full_name
                 session["auth_source"] = "ldap"
                 return jsonify({"success": True, "role": ldap_role})
-            elif ldap_err and "не состоит в группе" in ldap_err:
+            else:
                 register_failed_login(request.remote_addr)
-                return jsonify({"error": ldap_err}), 403
+                print(f"[AUTH REJECTED] Пользователь '{username}' не авторизован через LDAP: {ldap_err}")
+                return jsonify({"error": ldap_err or "Неверный логин или пароль доменной учетной записи"}), 401
 
-        # Ошибка входа
+        # Ошибка входа (локальные пользователи)
         register_failed_login(request.remote_addr)
         return jsonify({"error": "Неверный логин или пароль"}), 401
             
