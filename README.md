@@ -106,7 +106,7 @@ sudo systemctl enable --now centralized-auth
 * **Тело запроса:**
   ```json
   {
-    "username": "ivanov",
+    "username": "user1",
     "password": "user_password"
   }
   ```
@@ -114,7 +114,7 @@ sudo systemctl enable --now centralized-auth
   ```json
   {
     "success": true,
-    "username": "ivanov",
+    "username": "user1",
     "role": "admin",
     "source": "ldap"
   }
