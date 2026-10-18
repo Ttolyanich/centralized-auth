@@ -507,6 +507,12 @@ def login_required(f):
 @app.route('/')
 @login_required
 def index():
+    if session.get("auth_source") == "ldap" and session.get("username"):
+        try:
+            sync_ldap_user(session.get("username"), session.get("role"), session.get("display_name") or session.get("full_name") or session.get("username"))
+        except Exception as e:
+            print(f"Error auto-syncing session user on index: {e}")
+
     return render_template(
         'auth_admin.html',
         ldap_enabled=config.get("ldap_enabled", False),
@@ -650,6 +656,17 @@ def api_get_users():
     if session.get("role") != "admin":
         return jsonify({"error": "Forbidden: Only admins can view users"}), 403
     try:
+        # Автоматически сохраняем текущего активного LDAP пользователя в базу, если его там еще нет
+        if session.get("auth_source") == "ldap" and session.get("username"):
+            try:
+                sync_ldap_user(
+                    session.get("username"),
+                    session.get("role"),
+                    session.get("display_name") or session.get("full_name") or session.get("username")
+                )
+            except Exception as e:
+                print(f"Error auto-syncing session user in api_get_users: {e}")
+
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT id, username, role, auth_source, display_name, created_at FROM users ORDER BY id ASC")
