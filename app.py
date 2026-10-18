@@ -384,19 +384,41 @@ def authenticate_ldap(username, password):
 
         # Шаг 4: Определение роли (admin или employee)
         role = "employee"
-        admin_users_set = set(config.get("ldap_admin_users", []))
+        
+        # Собираем все варианты написания администраторов из .env (и с доменом, и без него)
+        admin_users_all = set()
+        for u in config.get("ldap_admin_users", []):
+            u_clean = u.strip().lower()
+            if u_clean:
+                admin_users_all.add(u_clean)
+                if "@" in u_clean:
+                    admin_users_all.add(u_clean.split("@")[0])
+                elif "\\" in u_clean:
+                    admin_users_all.add(u_clean.split("\\")[-1])
+
+        # Собираем все идентификаторы текущего пользователя из AD
         user_cands = {clean_user.lower(), username.lower()}
+        if "@" in clean_user:
+            user_cands.add(clean_user.split("@")[0].lower())
+        if "@" in username:
+            user_cands.add(username.split("@")[0].lower())
+        if ldap_domain:
+            user_cands.add(f"{clean_user.lower()}@{ldap_domain.lower()}")
         if hasattr(user_entry, 'mail') and user_entry.mail:
             user_cands.add(str(user_entry.mail).strip().lower())
+            if "@" in str(user_entry.mail):
+                user_cands.add(str(user_entry.mail).split("@")[0].strip().lower())
         if hasattr(user_entry, 'userPrincipalName') and user_entry.userPrincipalName:
             user_cands.add(str(user_entry.userPrincipalName).strip().lower())
+            if "@" in str(user_entry.userPrincipalName):
+                user_cands.add(str(user_entry.userPrincipalName).split("@")[0].strip().lower())
         if hasattr(user_entry, 'sAMAccountName') and user_entry.sAMAccountName:
             user_cands.add(str(user_entry.sAMAccountName).strip().lower())
 
-        is_explicit_admin = bool(user_cands & admin_users_set)
+        is_explicit_admin = bool(user_cands & admin_users_all)
         if is_explicit_admin or (admin_group and is_member_of_group(admin_group)):
             role = "admin"
-        elif not admin_group and not admin_users_set:
+        elif not admin_group and not admin_users_all:
             # Если не заданы ни группа администраторов, ни список админов,
             # но пользователь прошел проверку req_group:
             role = "admin"
@@ -421,6 +443,20 @@ def sync_ldap_user(username, ad_role, display_name):
     try:
         clean_user = username.strip()
         short_login = clean_user.split('@')[0].split('\\')[-1].strip().lower()
+
+        # Проверяем, не добавлен ли пользователь в LDAP_ADMIN_USERS в .env
+        admin_users_all = set()
+        for u in config.get("ldap_admin_users", []):
+            u_clean = u.strip().lower()
+            if u_clean:
+                admin_users_all.add(u_clean)
+                if "@" in u_clean:
+                    admin_users_all.add(u_clean.split("@")[0])
+                elif "\\" in u_clean:
+                    admin_users_all.add(u_clean.split("\\")[-1])
+
+        if clean_user.lower() in admin_users_all or short_login in admin_users_all:
+            ad_role = 'admin'
 
         cursor.execute(
             "SELECT id, username, role, auth_source, display_name FROM users WHERE LOWER(username) IN (?, ?)",
