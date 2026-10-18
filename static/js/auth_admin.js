@@ -112,27 +112,40 @@ function renderUsers(users) {
     tbody.innerHTML = '';
 
     if (users.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; padding:32px; color:#888;">Пользователи не найдены</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding:32px; color:#888;">Пользователи не найдены</td></tr>`;
         return;
     }
 
     users.forEach(user => {
         const safeName = user.username.replace(/['"]/g, '');
+        const safeDisplayName = (user.display_name || '').replace(/['"]/g, '');
         const row = document.createElement('tr');
         
-        // Имя пользователя
+        // 1. Имя пользователя и отображаемое имя (displayName)
         const tdName = document.createElement('td');
-        tdName.style.fontFamily = 'monospace';
-        tdName.style.fontWeight = '600';
         tdName.style.padding = '14px 24px';
-        tdName.innerText = safeName;
+        let nameHtml = `<div style="font-family: monospace; font-weight: 600; color: var(--text-main); font-size: 14px;">${safeName}</div>`;
+        if (safeDisplayName && safeDisplayName.toLowerCase() !== safeName.toLowerCase()) {
+            nameHtml += `<div style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">${safeDisplayName}</div>`;
+        }
+        tdName.innerHTML = nameHtml;
         row.appendChild(tdName);
+
+        // 2. Источник учетной записи (Active Directory / Локальный)
+        const tdSource = document.createElement('td');
+        tdSource.style.padding = '14px 24px';
+        if (user.auth_source === 'ldap') {
+            tdSource.innerHTML = `<span class="service-status-badge status-active" style="display:inline-flex; align-items:center; gap:5px; font-size:12px; padding:3px 8px; border-radius:6px; background: rgba(59, 130, 246, 0.12); color: #3b82f6; border: 1px solid rgba(59, 130, 246, 0.3);">🌐 Active Directory</span>`;
+        } else {
+            tdSource.innerHTML = `<span class="service-status-badge" style="display:inline-flex; align-items:center; gap:5px; font-size:12px; padding:3px 8px; border-radius:6px; background: rgba(100, 116, 139, 0.12); color: var(--text-muted); border: 1px solid rgba(100, 116, 139, 0.25);">🖥️ Локальный</span>`;
+        }
+        row.appendChild(tdSource);
         
-        // Роль (кастомный селект)
+        // 3. Роль (кастомный селект с сохранением в БД)
         const tdRole = document.createElement('td');
         tdRole.style.padding = '14px 24px';
         if (user.username === CURRENT_USERNAME) {
-            tdRole.innerHTML = `<span class="status-badge active">${user.role === 'admin' ? 'Администратор' : 'Сотрудник'}</span>`;
+            tdRole.innerHTML = `<span class="status-badge active">${user.role === 'admin' ? 'Администратор' : 'Сотрудник'} <span style="font-size:11px; opacity:0.8;">(Вы)</span></span>`;
         } else {
             tdRole.className = 'table-cell-dropdown';
             const dropdown = createCustomDropdown([
@@ -145,20 +158,25 @@ function renderUsers(users) {
         }
         row.appendChild(tdRole);
         
-        // Дата создания
+        // 4. Дата создания / первого входа
         const tdDate = document.createElement('td');
         tdDate.style.padding = '14px 24px';
         tdDate.style.color = '#888';
-        tdDate.innerText = user.created_at;
+        tdDate.innerText = user.created_at || '—';
         row.appendChild(tdDate);
         
-        // Действия (Сброс пароля без пересоздания + удаление)
+        // 5. Действия (Сброс пароля для локальных / бейдж для AD + удаление)
         const tdActions = document.createElement('td');
         tdActions.className = 'text-right';
         tdActions.style.padding = '14px 24px';
         tdActions.style.whiteSpace = 'nowrap';
         
-        let actionsHtml = `<button onclick="openResetModal(${user.id}, '${safeName}')" class="btn-action-reset" style="margin-right: 8px;" title="Сбросить пароль пользователя">🔑 Сброс пароля</button>`;
+        let actionsHtml = '';
+        if (user.auth_source === 'ldap') {
+            actionsHtml += `<span class="btn-action-disabled" style="opacity: 0.65; cursor: not-allowed; display:inline-block; font-size:12px; padding:6px 12px; border-radius:6px; background:var(--bg-offset); border:1px solid var(--border-color); color:var(--text-muted); margin-right: 8px;" title="Пароль управляется в домене Active Directory">🔐 Доменный</span>`;
+        } else {
+            actionsHtml += `<button onclick="openResetModal(${user.id}, '${safeName}')" class="btn-action-reset" style="margin-right: 8px;" title="Сбросить пароль пользователя">🔑 Сброс пароля</button>`;
+        }
         
         if (user.username === CURRENT_USERNAME) {
             actionsHtml += `<span style="color:#666; font-size:12px; padding: 6px 12px; display:inline-block;">Текущий</span>`;

@@ -36,6 +36,7 @@ config = {
     "ldap_bind_password": "",
     "ldap_required_group": "",
     "ldap_admin_group": "",
+    "ldap_admin_users": [],
     "ldap_nested_groups": True
 }
 
@@ -80,6 +81,15 @@ if os.getenv("LDAP_ADMIN_GROUP"):
     config["ldap_admin_group"] = os.getenv("LDAP_ADMIN_GROUP").strip()
 if os.getenv("LDAP_NESTED_GROUPS"):
     config["ldap_nested_groups"] = os.getenv("LDAP_NESTED_GROUPS", "true").lower() in ["true", "1", "yes"]
+
+# Список администраторов из .env (по логинам через запятую)
+ldap_admins_raw = os.getenv("LDAP_ADMIN_USERS") or os.getenv("AD_ADMIN_USERS") or ""
+if ldap_admins_raw:
+    config["ldap_admin_users"] = [u.strip().lower() for u in ldap_admins_raw.split(",") if u.strip()]
+elif isinstance(config.get("ldap_admin_users"), str):
+    config["ldap_admin_users"] = [u.strip().lower() for u in config["ldap_admin_users"].split(",") if u.strip()]
+elif isinstance(config.get("ldap_admin_users"), list):
+    config["ldap_admin_users"] = [str(u).strip().lower() for u in config["ldap_admin_users"] if str(u).strip()]
 
 # Автогенерация secret_key и node_api_token при первом старте
 config_changed = False
@@ -176,6 +186,8 @@ def init_db():
             username TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
             role TEXT NOT NULL DEFAULT 'admin',
+            auth_source TEXT NOT NULL DEFAULT 'local',
+            display_name TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
@@ -188,13 +200,30 @@ def init_db():
     """)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_rate_limits ON rate_limits (rate_key, attempt_time)")
     conn.commit()
+
+    # Автоматическая миграция схемы: добавление auth_source и display_name при обновлении существующей БД
+    try:
+        cursor.execute("PRAGMA table_info(users)")
+        existing_cols = {col[1] for col in cursor.fetchall()}
+        if "auth_source" not in existing_cols:
+            cursor.execute("ALTER TABLE users ADD COLUMN auth_source TEXT NOT NULL DEFAULT 'local'")
+            print("DB MIGRATION: Added 'auth_source' column to 'users' table")
+        if "display_name" not in existing_cols:
+            cursor.execute("ALTER TABLE users ADD COLUMN display_name TEXT")
+            print("DB MIGRATION: Added 'display_name' column to 'users' table")
+        conn.commit()
+    except Exception as e:
+        print(f"DB MIGRATION WARNING: {e}")
     
     # Если пользователей нет, создаем администратора по умолчанию
     cursor.execute("SELECT COUNT(*) FROM users")
     if cursor.fetchone()[0] == 0:
         default_pass = os.getenv("ADMIN_PASSWORD", "admin123")
         pw_hash = generate_password_hash(default_pass)
-        cursor.execute("INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)", ("admin", pw_hash, "admin"))
+        cursor.execute(
+            "INSERT INTO users (username, password_hash, role, auth_source, display_name) VALUES (?, ?, ?, 'local', ?)",
+            ("admin", pw_hash, "admin", "Локальный Администратор")
+        )
         conn.commit()
         print("*" * 50)
         print("INITIALIZATION: Created default admin user!")
@@ -289,9 +318,8 @@ def authenticate_ldap(username, password):
             # Анонимный bind, если сервисный аккаунт не указан
             service_conn = Connection(server, auto_bind=True)
 
-        # Поиск пользователя по sAMAccountName, userPrincipalName или mail
         search_filter = f"(&(objectCategory=person)(objectClass=user)(|(sAMAccountName={clean_user})(sAMAccountName={username})(userPrincipalName={username})(userPrincipalName={clean_user}@{ldap_domain})(mail={username})(mail={clean_user})))"
-        attributes = ['distinguishedName', 'sAMAccountName', 'displayName', 'mail', 'memberOf']
+        attributes = ['distinguishedName', 'sAMAccountName', 'userPrincipalName', 'displayName', 'mail', 'memberOf']
 
         print(f"[LDAP] Поиск в base_dn '{base_dn}' по фильтру: {search_filter}")
         service_conn.search(search_base=base_dn, search_filter=search_filter, search_scope=SUBTREE, attributes=attributes)
@@ -356,10 +384,21 @@ def authenticate_ldap(username, password):
 
         # Шаг 4: Определение роли (admin или employee)
         role = "employee"
-        if admin_group and is_member_of_group(admin_group):
+        admin_users_set = set(config.get("ldap_admin_users", []))
+        user_cands = {clean_user.lower(), username.lower()}
+        if hasattr(user_entry, 'mail') and user_entry.mail:
+            user_cands.add(str(user_entry.mail).strip().lower())
+        if hasattr(user_entry, 'userPrincipalName') and user_entry.userPrincipalName:
+            user_cands.add(str(user_entry.userPrincipalName).strip().lower())
+        if hasattr(user_entry, 'sAMAccountName') and user_entry.sAMAccountName:
+            user_cands.add(str(user_entry.sAMAccountName).strip().lower())
+
+        is_explicit_admin = bool(user_cands & admin_users_set)
+        if is_explicit_admin or (admin_group and is_member_of_group(admin_group)):
             role = "admin"
-        elif not admin_group:
-            # Если админ-группа не задана, но пользователь прошел проверку req_group:
+        elif not admin_group and not admin_users_set:
+            # Если не заданы ни группа администраторов, ни список админов,
+            # но пользователь прошел проверку req_group:
             role = "admin"
 
         print(f"[LDAP] Авторизация успешна! Роль: {role}, имя: {display_name}")
@@ -368,6 +407,54 @@ def authenticate_ldap(username, password):
     except Exception as e:
         print(f"[LDAP ERROR] Ошибка соединения с контроллером домена: {e}")
         return False, None, None, f"Ошибка соединения с LDAP контроллером: {e}"
+
+def sync_ldap_user(username, ad_role, display_name):
+    """
+    Кеширует пользователя Active Directory в локальную базу SQLite (users.db).
+    Сохраняет назначенную администратором в веб-интерфейсе роль, если пользователь уже существует в БД.
+    Если же пользователь явно указан в LDAP_ADMIN_USERS или группе администраторов AD,
+    он автоматически повышается до роли 'admin'.
+    Возвращает эффективную роль пользователя из БД.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        clean_user = username.strip()
+        short_login = clean_user.split('@')[0].split('\\')[-1].strip().lower()
+
+        cursor.execute(
+            "SELECT id, username, role, auth_source, display_name FROM users WHERE LOWER(username) IN (?, ?)",
+            (clean_user.lower(), short_login)
+        )
+        existing = cursor.fetchone()
+
+        disp_name = display_name or clean_user
+
+        if not existing:
+            initial_role = ad_role or 'employee'
+            cursor.execute(
+                "INSERT INTO users (username, password_hash, role, auth_source, display_name) VALUES (?, ?, ?, ?, ?)",
+                (clean_user, "!ldap_account", initial_role, "ldap", disp_name)
+            )
+            conn.commit()
+            effective_role = initial_role
+        else:
+            # Сохраняем роль из БД, но если из AD / LDAP_ADMIN_USERS пришла роль 'admin', повышаем
+            effective_role = existing['role']
+            if ad_role == 'admin':
+                effective_role = 'admin'
+
+            cursor.execute(
+                "UPDATE users SET role = ?, auth_source = 'ldap', display_name = ? WHERE id = ?",
+                (effective_role, disp_name, existing['id'])
+            )
+            conn.commit()
+        return effective_role
+    except Exception as e:
+        print(f"Error syncing LDAP user to DB: {e}")
+        return ad_role or 'employee'
+    finally:
+        conn.close()
 
 # Декоратор авторизации
 def login_required(f):
@@ -418,10 +505,11 @@ def login():
         except Exception as e:
             print(f"DB error during login: {e}")
 
-        if user and check_password_hash(user['password_hash'], password):
+        if user and user['auth_source'] != 'ldap' and check_password_hash(user['password_hash'], password):
             session["auth_logged_in"] = True
             session["username"] = user['username']
             session["role"] = user['role']
+            session["display_name"] = user['display_name'] or user['username']
             session["auth_source"] = "local"
             return jsonify({"success": True, "role": user['role']})
 
@@ -429,12 +517,14 @@ def login():
         if config["ldap_enabled"]:
             ldap_ok, ldap_role, full_name, ldap_err = authenticate_ldap(username, password)
             if ldap_ok:
+                effective_role = sync_ldap_user(username, ldap_role, full_name)
                 session["auth_logged_in"] = True
                 session["username"] = username
-                session["role"] = ldap_role
+                session["role"] = effective_role
                 session["full_name"] = full_name
+                session["display_name"] = full_name or username
                 session["auth_source"] = "ldap"
-                return jsonify({"success": True, "role": ldap_role})
+                return jsonify({"success": True, "role": effective_role})
             else:
                 register_failed_login(request.remote_addr)
                 print(f"[AUTH REJECTED] Пользователь '{username}' не авторизован через LDAP: {ldap_err}")
@@ -452,6 +542,8 @@ def logout():
     session.pop("auth_logged_in", None)
     session.pop("username", None)
     session.pop("role", None)
+    session.pop("display_name", None)
+    session.pop("full_name", None)
     session.pop("auth_source", None)
     return jsonify({"success": True})
 
@@ -484,11 +576,12 @@ def api_auth_verify():
         user = cursor.fetchone()
         conn.close()
 
-        if user and check_password_hash(user['password_hash'], password):
+        if user and user['auth_source'] != 'ldap' and check_password_hash(user['password_hash'], password):
             return jsonify({
                 "success": True, 
                 "username": user['username'],
                 "role": user['role'], 
+                "display_name": user['display_name'] or user['username'],
                 "source": "local"
             })
     except Exception as e:
@@ -498,11 +591,13 @@ def api_auth_verify():
     if config["ldap_enabled"]:
         ldap_ok, ldap_role, full_name, ldap_err = authenticate_ldap(username, password)
         if ldap_ok:
+            effective_role = sync_ldap_user(username, ldap_role, full_name)
             return jsonify({
                 "success": True, 
                 "username": username,
-                "role": ldap_role, 
+                "role": effective_role, 
                 "full_name": full_name,
+                "display_name": full_name or username,
                 "source": "ldap"
             })
         elif ldap_err and "не состоит в группе" in ldap_err:
@@ -521,7 +616,7 @@ def api_get_users():
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT id, username, role, created_at FROM users ORDER BY id ASC")
+        cursor.execute("SELECT id, username, role, auth_source, display_name, created_at FROM users ORDER BY id ASC")
         users = [dict(row) for row in cursor.fetchall()]
         conn.close()
         return jsonify(users)
@@ -551,7 +646,10 @@ def api_create_user():
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)", (username, pw_hash, role))
+        cursor.execute(
+            "INSERT INTO users (username, password_hash, role, auth_source, display_name) VALUES (?, ?, ?, 'local', ?)",
+            (username, pw_hash, role, username)
+        )
         conn.commit()
         conn.close()
         return jsonify({"success": True})
@@ -674,6 +772,10 @@ def api_admin_reset_password(user_id):
             conn.close()
             return jsonify({"error": "Пользователь не найден"}), 404
             
+        if user['auth_source'] == 'ldap':
+            conn.close()
+            return jsonify({"error": "Нельзя сбросить пароль доменного пользователя Active Directory"}), 400
+
         new_hash = generate_password_hash(new_password)
         cursor.execute("UPDATE users SET password_hash = ? WHERE id = ?", (new_hash, user_id))
         conn.commit()
