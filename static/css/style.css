@@ -1508,7 +1508,7 @@ html.layout-fullwidth body .main-container {
     color: var(--text-muted);
 }
 
-@media (max-width: 760px) {
+@media (max-width: 768px) {
     .page-shell {
         padding: 0 16px;
     }
@@ -1521,9 +1521,84 @@ html.layout-fullwidth body .main-container {
     .page-hero-badges {
         justify-content: flex-start;
     }
+
+    .nav-container {
+        padding: 10px 14px;
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+
+    .brand-zone {
+        gap: 8px;
+    }
+
+    .brand-title {
+        font-size: 15px;
+    }
+
+    .user-profile-zone {
+        gap: 8px;
+    }
+
+    .current-user-name {
+        padding: 4px 8px;
+        font-size: 11px;
+    }
+
+    .btn-logout {
+        padding: 4px 8px;
+        font-size: 11px;
+    }
+
+    .main-container {
+        margin: 16px auto;
+        padding: 0 12px;
+        gap: 16px;
+    }
+
+    .card-header {
+        padding: 16px 14px;
+    }
+
+    .card-body {
+        padding: 16px 14px;
+    }
+
+    .form-row-multi {
+        flex-direction: column !important;
+        align-items: stretch !important;
+        gap: 12px !important;
+    }
+
+    .form-row-multi .input-wrapper,
+    .form-row-multi button {
+        width: 100% !important;
+    }
+
+    .table-wrapper {
+        width: 100%;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        border-radius: 8px;
+    }
+
+    .data-table th,
+    .data-table td {
+        white-space: nowrap;
+        padding: 10px 12px;
+        font-size: 12.5px;
+    }
+
+    .modal-card {
+        width: calc(100vw - 24px) !important;
+        max-width: calc(100vw - 24px) !important;
+        padding: 20px 16px !important;
+        margin: 10px auto !important;
+    }
 }
--e 
+
 #network-status.online { background: rgba(34, 197, 94, 0.1); color: #22c55e; border-color: rgba(34, 197, 94, 0.2); }
 #network-status.offline { background: rgba(239, 68, 68, 0.1); color: #ef4444; border-color: rgba(239, 68, 68, 0.2); }
 #auth-status.auth-ok { background: rgba(34, 197, 94, 0.1); color: #22c55e; border-color: rgba(34, 197, 94, 0.2); }
 #auth-status.auth-error { background: rgba(239, 68, 68, 0.1); color: #ef4444; border-color: rgba(239, 68, 68, 0.2); }
+
