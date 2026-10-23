@@ -10,6 +10,8 @@ services:
       - "${BIND_HOST:-127.0.0.1}:${BIND_PORT:-5001}:${BIND_PORT:-5001}"
     volumes:
       - ./data:/app/data
+      - ./templates:/app/templates
+      - ./static:/app/static
     env_file:
       - .env
     command: gunicorn --workers 2 --bind 0.0.0.0:${BIND_PORT:-5001} app:app
